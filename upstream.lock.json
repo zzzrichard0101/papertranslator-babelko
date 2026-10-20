@@ -1,0 +1,12 @@
+{
+  "PDFMathTranslate-next": {
+    "url": "https://github.com/PDFMathTranslate/PDFMathTranslate-next.git",
+    "commit": "3538a8195d8379fe3fb4a0117c88d15c5b7b5e89",
+    "license": "AGPL-3.0"
+  },
+  "BabelDOC": {
+    "url": "https://github.com/funstory-ai/BabelDOC.git",
+    "commit": "38d3896dcde9b5a940c62cf5563cadea673a64d3",
+    "license": "AGPL-3.0"
+  }
+}

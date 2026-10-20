@@ -1,0 +1,39 @@
+BabelKO 0.1.0a1 - development verification (2026-10-20)
+
+Scope: separate Windows source application; original PaperTranslator remains installed.
+Pinned upstream commits and source licenses: upstream.lock.json and NOTICE.txt.
+This is not a standalone packaged EXE or a public release.
+
+Unit checks: 40 passed. Covers translation ID/number/placeholder guards, fraction
+equivalence, guarded plain fallback, offline connections, progress completion,
+cancellation propagation, OCR reading order and missing tracker output detection.
+
+Synthetic integration: passed with real BabelDOC, DocLayout, MuPDF OCR and PDF
+export, plus a deterministic local HTTP translator. Exercises native two-column
+input and a raster scan with a table; invalid batch retry, source hashes, numeric
+cells, Korean labels, complete body inputs and zero-call completed-job replay.
+This integration does not measure LLM accuracy.
+
+Local model checks: installed Qwen 27B; a two-column research PDF (selected
+physical pages 1 and 9) and a synthetic English raster scan with table (page 2).
+No target text manually edited. Renders checked for readable columns, tables,
+figures and visible numeric cells. The original faces in bilingual exports were
+compared with original pages using Poppler pixels. Cached timing is not a fresh
+translation throughput comparison. Private inputs, outputs, logs, responses and
+machine model paths are excluded from Git.
+
+Limitations: no independent semantic benchmark or proof of complete OCR recall.
+White background printed English scans are the tested OCR scope. Colored paper,
+handwriting, complex diagrams, merged tables and long-document fault recovery
+need more coverage. The previous application's full multi-model correction,
+API configuration and Obsidian features have not been ported.
+
+Reproduce after setup:
+  uv run pytest -q
+  uv run python scripts/integration.py
+  uv run python scripts/smoke_gui.py
+  uv run python scripts/audit_public.py  (after staging intended public sources)
+
+Real inference: scripts/translate.py accepts an existing PDF, existing output
+directory, physical page selection and OCR auto/off/force. Full raw responses
+and tracker evidence are retained under the separate local application root.

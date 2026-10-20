@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+.pytest_cache/
+work/
+test_vault/
+outputs/
+upstream/
+*.log
+build/
+dist/
+release/
