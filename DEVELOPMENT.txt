@@ -4,9 +4,14 @@ Scope: separate Windows source application; original PaperTranslator remains ins
 Pinned upstream commits and source licenses: upstream.lock.json and NOTICE.txt.
 This is not a standalone packaged EXE or a public release.
 
-Unit checks: 40 passed. Covers translation ID/number/placeholder guards, fraction
+Unit checks: 43 passed. Covers translation ID/number/placeholder guards, fraction
 equivalence, guarded plain fallback, offline connections, progress completion,
 cancellation propagation, OCR reading order and missing tracker output detection.
+Windows state-file replacement also tests a real reader handle denying delete,
+bounded retry, retention of prior state and temporary-file cleanup on failure.
+The PDF integration passed while another process repeatedly opened its state
+files, simulating GUI polling. Short Windows sharing denials now retry for at
+most two seconds instead of terminating preparation immediately.
 
 Synthetic integration: passed with real BabelDOC, DocLayout, MuPDF OCR and PDF
 export, plus a deterministic local HTTP translator. Exercises native two-column
