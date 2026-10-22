@@ -2,7 +2,7 @@
 import collections,json,re,threading,time,uuid
 import httpx
 from .storage import save,root
-from .quantities import equivalent_fractions
+from .quantities import equivalent_fractions,equivalent_scales,equivalent_scaled_numerals,equivalent_percentage_points,percentage_point_errors,WORDS as CARDINALS
 from .upstream import prepare
 prepare()
 from pdf2zh_next.translator.translator_impl.openai import OpenAITranslator
@@ -14,27 +14,63 @@ if str(client_cache.db.database)!=str(_cache_path):
     client_cache.db.create_tables([client_cache._TranslationCache],safe=True)
 
 PLACEHOLDER=re.compile(r"\{v\d+\}|<style\s+id=['\"]\d+['\"]>|</style>")
+NUMBER_STYLE=re.compile(r"\d+<style\s+id=['\"]\d+['\"]>[,.]</style>\d+")
 NUMBER=re.compile(r'[-+]?\d+(?:[.,]\d+)*(?:[eE][-+]?\d+)?')
-WORDS={'one':'1','two':'2','three':'3','four':'4','five':'5','six':'6','seven':'7','eight':'8','nine':'9','ten':'10','eleven':'11','twelve':'12'}
+WORDS={'zero':'0','one':'1','two':'2','three':'3','four':'4','five':'5','six':'6','seven':'7','eight':'8','nine':'9','ten':'10','eleven':'11','twelve':'12',
+       'first':'1','second':'2','third':'3','fourth':'4','fifth':'5','sixth':'6','seventh':'7','eighth':'8','ninth':'9','tenth':'10',
+       'January':'1','February':'2','March':'3','April':'4','May':'5','June':'6','July':'7','August':'8','September':'9','October':'10','November':'11','December':'12'}
+WORDS.update(dict(Jan='1',Feb='2',Mar='3',Apr='4',Jun='6',Jul='7',Aug='8',Sep='9',Sept='9',Oct='10',Nov='11',Dec='12'))
+WORDS.update({k:str(v) for k,v in CARDINALS.items()})
+WORDS['zeros']='0'
+WORDS.update(dict(eleventh='11',twelfth='12',thirteenth='13',fourteenth='14',fifteenth='15',sixteenth='16',seventeenth='17',eighteenth='18',nineteenth='19',twentieth='20'))
+CALENDAR={'january','february','march','april','may','june','july','august','september','october','november','december',
+          'jan','feb','mar','apr','jun','jul','aug','sep','sept','oct','nov','dec'}
 
 def numbers(text):
     text=plain(text).replace('−','-')
+    # A lexical hyphen is not a minus sign (mid-20th, post-1945).
+    # Keep standalone negative quantities, including those after punctuation.
+    text=re.sub(r'(?<=[A-Za-z])-(?=\d)',' ',text)
     text=re.sub(r'(?<=\d)\s*[-–—]\s*(?=\d)',' to ',text)
     return collections.Counter(n.replace(',','') for n in NUMBER.findall(text))
 
 def number_errors(source,target):
+    # Canonicalize explicit section/war ordinals, never arbitrary capital I/V
+    # (which may be a variable or an OCR error).
+    romans={'I':1,'II':2,'III':3,'IV':4,'V':5,'VI':6,'VII':7,'VIII':8,'IX':9,'X':10}
+    source=re.sub(r'\b(Part|Chapter|Volume|Book|World War)\s+(VIII|VII|III|VI|IV|IX|II|X|V|I)\b',
+                  lambda m:m[1]+' '+str(romans[m[2].upper()]),source,flags=re.I)
+    source,target=equivalent_percentage_points(source,target)
+    # PDF line wrapping may split a DOI at a decimal point; join only the URL.
+    source=re.sub(r'(https?://doi\.org/\S*?\d\.)\s+(?=\d)',r'\1',source)
+    target=re.sub(r'(https?://doi\.org/\S*?\d\.)\s+(?=\d)',r'\1',target)
+    source,target=equivalent_scales(source,target)
+    source,target,mismatched_scale=equivalent_scaled_numerals(plain(source),plain(target))
+    if mismatched_scale:return True
     source,target,unmatched=equivalent_fractions(source,target)
     if unmatched:return True
     a,b=numbers(source),numbers(target)
     missing=a-b;extra=b-a
+    # Treat a compound cardinal as one quantity. Counting thirty and four
+    # separately rejected the correct 34 and could permit an incorrect 30.
+    compounds=list(re.finditer(r'\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[- ](one|two|three|four|five|six|seven|eight|nine)\b',source,re.I))
+    for match in compounds:
+        n=str(CARDINALS[match[1].lower()]+CARDINALS[match[2].lower()])
+        extra[n]=max(0,extra[n]-1)
+    word_source=list(source)
+    for match in compounds:word_source[match.start():match.end()]=' '*len(match[0])
+    word_source=''.join(word_source)
     for word,n in WORDS.items():
-        extra[n]=max(0,extra[n]-len(re.findall(r'\b'+word+r'\b',source,re.I)))
+        # Native PDF extraction can join a month to its day (July5). Digits
+        # are legitimate calendar boundaries; letters are not.
+        pattern=r'(?<![A-Za-z])'+word+r'(?![A-Za-z])' if word.lower() in CALENDAR else r'\b'+word+r'\b'
+        extra[n]=max(0,extra[n]-len(re.findall(pattern,word_source,re.I)))
     # Explicit reciprocal wording may add the numerator in Korean fraction notation.
     if re.search(r'\b(?:four|4) times smaller\b',source,re.I) and re.search(r'4\s*분의\s*1',target):extra['1']=max(0,extra['1']-1)
     return bool(missing or +extra)
 
 
-def plain(text):return PLACEHOLDER.sub('',text)
+def plain(text):return PLACEHOLDER.sub(' ',text)
 def validate_items(inputs,outputs):
     if not isinstance(outputs,list) or len(outputs)!=len(inputs):raise ValueError('번역 항목 누락·개수 불일치')
     if any(not isinstance(x,dict) or set(x)!={'id','output'} or type(x['id']) is not int or not isinstance(x['output'],str) for x in outputs):raise ValueError('번역 항목 필드 오류')
@@ -45,6 +81,12 @@ def validate_items(inputs,outputs):
         target=targets[source['id']]
         if not target.strip():raise ValueError('빈 번역')
         if collections.Counter(PLACEHOLDER.findall(source['input']))!=collections.Counter(PLACEHOLDER.findall(target)):raise ValueError('수식·서식 자리표시자 누락 또는 중복')
+        # OCR/PDF styling can put just a separator inside a style tag. The
+        # numeric multiset alone would accept "44개의 <style>,</style>850" as
+        # 44,850 even though the actual number is visibly broken.
+        if collections.Counter(NUMBER_STYLE.findall(source['input']))!=collections.Counter(NUMBER_STYLE.findall(target)):
+            raise ValueError('서식으로 분리된 숫자 표기가 끊기거나 변경되었습니다.')
+        if percentage_point_errors(plain(source['input']),plain(target)):raise ValueError('퍼센트(%)와 퍼센트포인트(%p)의 수치·단위 불일치')
         if number_errors(source['input'],target):raise ValueError('숫자·부호·출현 수 불일치: 원문 숫자 표기를 그대로 유지하세요.')
     return outputs
 
@@ -61,11 +103,22 @@ class KoreanTranslator(OpenAITranslator):
         self.add_cache_impact_parameters('babelko_protocol','ko-preserve-3')
     def _request(self,messages,schema=None):
         if self.cancel():raise InterruptedError('취소됨')
+        before=getattr(self,'before_request',None)
+        if before:before()
         kwargs=dict(model=self.model,messages=messages,temperature=.1,max_tokens=2400,seed=42)
+        if getattr(self,'phase',None)=='draft':
+            kwargs.update(temperature=.7,top_p=.6,extra_body=dict(top_k=20,repeat_penalty=1.05))
         if schema:kwargs['response_format']=dict(type='json_schema',json_schema=dict(name='translation',strict=True,schema=schema))
         started=time.perf_counter();response=self.client.chat.completions.create(**kwargs)
         with self.lock:self.requests+=1
-        save(self.folder/'responses'/(uuid.uuid4().hex+'.json'),dict(messages=messages,response=response.model_dump(),seconds=time.perf_counter()-started))
+        performance=getattr(self,'performance',None)
+        if performance:
+            phase=getattr(self,'phase','direct');performance.add('model.'+phase,time.perf_counter()-started)
+            usage=response.usage
+            if usage:
+                performance.add('tokens.prompt.'+phase,count=usage.prompt_tokens or 0)
+                performance.add('tokens.output.'+phase,count=usage.completion_tokens or 0)
+        save(self.folder/'responses'/(uuid.uuid4().hex+'.json'),dict(messages=messages,response=response.model_dump(),seconds=time.perf_counter()-started,phase=getattr(self,'phase','direct')))
         if response.choices[0].finish_reason=='length':raise ValueError('번역 응답이 길이 제한으로 끊겼습니다.')
         return self._remove_cot_content(response.choices[0].message.content or '').strip()
     def _checked_plain(self,messages,source):

@@ -21,6 +21,18 @@ def test_korean_alias_selects_korean_primary_fonts():
     assert all('KR-' in s for s in get_font_family('ko')['normal'][:4])
 
 
+def test_iso_korean_uses_native_cjk_typesetting_without_changing_english():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    prepare()
+    from babeldoc.format.pdf.document_il.midend.typesetting import Typesetting
+    with patch('babeldoc.format.pdf.document_il.midend.typesetting.FontMapper',lambda _:None):
+        assert Typesetting(SimpleNamespace(lang_out='ko')).is_cjk
+        assert Typesetting(translation_config=SimpleNamespace(lang_out='ko')).is_cjk
+        assert Typesetting(SimpleNamespace(lang_out='ko-kr')).is_cjk
+        assert not Typesetting(SimpleNamespace(lang_out='en')).is_cjk
+
+
 def inputs():return [dict(id=0,input="The value is {v1}<style id='2'>24</style>."),dict(id=1,input='The change was -2.5.')]
 def outputs():return [dict(id=0,output="값은 {v1}<style id='2'>24</style>이다."),dict(id=1,output='변화량은 -2.5였다.')]
 

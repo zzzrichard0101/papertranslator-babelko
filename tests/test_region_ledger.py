@@ -1,0 +1,93 @@
+from types import SimpleNamespace as NS
+import pymupdf as fitz
+from babelko.region_ledger import RegionLedger
+
+
+def row(identity,page,x,y,text='12'):
+    return dict(id=identity,source_page=page,source_box=[x,y,x+15,y+12],role='table',source=text,
+        policy='translate',inputs=[text],record_keys=['shared-content-key'],target=text,
+        glyphs=[dict(text=c,box=[x+i*6,y,x+(i+1)*6,y+12]) for i,c in enumerate(text)])
+
+
+def fixture(tmp_path,rows,move=None,omit=None):
+    path=tmp_path/'fixture.pdf'
+    with fitz.open() as pdf:
+        page=pdf.new_page(width=600,height=800)
+        for item in rows:
+            if item['id']==omit:continue
+            for glyph in item['glyphs']:
+                x,y,x2,y2=glyph['box'];dx=120 if item['id']==move else 0
+                page.insert_text((x+dx,800-y2+10),glyph['text'],fontsize=12)
+        pdf.save(path)
+    # Use actual font boxes as the post-typesetting plan, independently of
+    # which output glyphs will later be moved/deleted by the exporter fault.
+    with fitz.open(path) as pdf:
+        for item in rows:
+            if item['id']==omit:continue
+            text=pdf[0].get_text('rawdict');chars=[c for b in text['blocks'] for l in b.get('lines',[]) for s in l['spans'] for c in s['chars']]
+            original=item['glyphs']
+            chosen=chars[(0 if item is rows[0] else len(rows[0]['glyphs'])):][:len(original)]
+            for g,c in zip(original,chosen):
+                a,b,d,e=c['bbox'];offset=120 if item['id']==move else 0
+                g['box']=[a-offset,800-e,d-offset,800-b]
+    ledger=RegionLedger(tmp_path);ledger.rows=rows
+    return ledger.inspect(path,[0])
+
+
+def test_same_numeric_value_in_two_cells_requires_two_correct_positions(tmp_path):
+    rows=[row('left',1,50,700),row('right',1,350,700)]
+    report=fixture(tmp_path,rows)
+    assert report['status']=='passed' and report['checked_regions']==2
+
+
+def test_short_cell_moved_to_wrong_column_fails_even_though_text_still_exists(tmp_path):
+    report=fixture(tmp_path,[row('left',1,50,700),row('right',1,350,700)],move='right')
+    assert report['status']=='failed'
+    assert report['issues'][0]['region_id']=='right'
+    assert 'pdf_glyph_missing_or_moved' in report['issues'][0]['codes']
+
+
+def test_missing_one_duplicate_cell_cannot_borrow_the_other_cell(tmp_path):
+    report=fixture(tmp_path,[row('left',1,50,700),row('right',1,350,700)],omit='right')
+    assert report['status']=='failed' and report['issues'][0]['region_id']=='right'
+
+
+def test_source_prose_omitted_before_translation_is_detected(tmp_path):
+    r=row('omitted',1,50,700,'Text');r.update(inputs=[],target=None,record_keys=[])
+    report=fixture(tmp_path,[r])
+    assert report['status']=='failed' and 'source_region_not_submitted' in report['issues'][0]['codes']
+
+
+def test_preserved_chart_label_is_checked_for_glyphs_without_model_submission(tmp_path):
+    r=row('axis',1,50,700,'11.7');r.update(role='fallback_line',inputs=[],target=None,record_keys=[])
+    assert fixture(tmp_path,[r])['status']=='passed'
+    assert fixture(tmp_path,[r],omit='axis')['status']=='failed'
+
+
+def test_new_punctuation_drawing_fragment_is_not_unmapped_translation(tmp_path):
+    ledger=RegionLedger(tmp_path);ledger.collecting=True
+    ledger.pre(NS(debug_id='new',unicode='—'),'.')
+    assert ledger.unknown==[]
+    ledger.pre(NS(debug_id='new',unicode='Untranslated body text'),'Untranslated body text')
+    assert len(ledger.unknown)==1
+
+
+def test_source_occurrence_ids_distinguish_page_and_geometry_but_share_content(tmp_path):
+    def paragraph(x):return NS(unicode='Same source.',box=NS(x=x,y=50,x2=x+100,y2=70),layout_label='text',debug_id='repeated')
+    pages=[NS(page_number=0,pdf_paragraph=[paragraph(50),paragraph(350)]),NS(page_number=1,pdf_paragraph=[paragraph(50)])]
+    ledger=RegionLedger(tmp_path);ledger.begin(NS(page=pages))
+    assert len({r['id'] for r in ledger.rows})==3
+    assert len({r['source'] for r in ledger.rows})==1
+
+
+def test_batch_worker_and_paragraph_worker_bind_by_source_and_returned_target(tmp_path):
+    import threading
+    p=NS(unicode='A result.',box=NS(x=50,y=50,x2=150,y2=70),layout_label='text',debug_id='a')
+    ledger=RegionLedger(tmp_path);ledger.begin(NS(page=[NS(page_number=0,pdf_paragraph=[p])]))
+    ledger.pre(p,'A result.')
+    thread=threading.Thread(target=lambda:ledger.link(dict(key='actual',source='A result.',final='결과이다.')))
+    thread.start();thread.join();ledger.post(p,'결과이다.')
+    assert ledger.rows[0]['record_keys']==['actual']
+    ledger.post(p,'다른 내용이다.')
+    # A second post cannot keep a stale link from a different target.
+    assert ledger.rows[0]['record_keys']==[]

@@ -18,6 +18,15 @@ def prepare():
         original=asset_api.get_font_family
         def korean_family(code):return original('KR' if code.lower() in {'ko','ko-kr'} else code)
         korean_family._babelko=True;asset_api.get_font_family=korean_family
+    # The pinned typesetter recognizes KR but omits the ISO language code KO.
+    # Keep the public language code while selecting its existing CJK spacing.
+    from babeldoc.format.pdf.document_il.midend.typesetting import Typesetting
+    if not getattr(Typesetting.__init__,'_babelko',False):
+        original_init=Typesetting.__init__
+        def korean_typesetter(self,translation_config):
+            original_init(self,translation_config)
+            if translation_config.lang_out.lower() in {'ko','ko-kr'}:self.is_cjk=True
+        korean_typesetter._babelko=True;Typesetting.__init__=korean_typesetter
 
 
 def assets(progress=print):

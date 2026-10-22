@@ -1,0 +1,18 @@
+[
+  {"id":"negation","source":"The trial did not demonstrate an improvement.","good":"시험에서는 개선이 입증되지 않았다.","bad":"시험에서는 개선이 입증되었다."},
+  {"id":"condition","source":"The estimate is valid only if the sensor remains dry.","good":"이 추정치는 센서가 건조한 상태를 유지할 때만 유효하다.","bad":"이 추정치는 센서 상태와 관계없이 유효하다."},
+  {"id":"modality","source":"The method may reduce noise but does not guarantee recovery.","good":"이 방법은 잡음을 줄일 수 있지만 복구를 보장하지 않는다.","bad":"이 방법은 잡음을 줄이며 복구를 보장한다."},
+  {"id":"scope","source":"Not all samples were excluded.","good":"모든 표본이 제외된 것은 아니다.","bad":"모든 표본이 제외되었다."},
+  {"id":"comparison","source":"Higher pressure produced a lower response.","good":"압력이 높을수록 반응은 낮아졌다.","bad":"압력이 높을수록 반응은 높아졌다."},
+  {"id":"attribution","source":"The reviewer evaluated the author's argument.","good":"검토자가 저자의 주장을 평가했다.","bad":"저자가 검토자의 주장을 평가했다."},
+  {"id":"causality","source":"The association does not establish that exposure caused the change.","good":"이 연관성은 노출이 변화를 일으켰다는 것을 입증하지 않는다.","bad":"이 연관성은 노출이 변화를 일으켰다는 것을 입증한다."},
+  {"id":"tail_omission","source":"The technique works in air. It fails under water.","good":"이 기법은 공기 중에서 작동한다. 물속에서는 작동하지 않는다.","bad":"이 기법은 공기 중에서 작동한다."},
+  {"id":"addition","source":"The device was tested in a laboratory.","good":"이 장치는 실험실에서 시험되었다.","bad":"이 장치는 실험실에서 시험되었다. 야외에서도 안전성이 입증되었다."},
+  {"id":"units","source":"The sample mass was 0.25 g.","good":"표본의 질량은 0.25 g이었다.","bad":"표본의 질량은 0.25 mg이었다."},
+  {"id":"temporal","source":"Calibration occurred before the measurement, not after it.","good":"보정은 측정 후가 아니라 측정 전에 이루어졌다.","bad":"보정은 측정 전이 아니라 측정 후에 이루어졌다."},
+  {"id":"unless","source":"Keep the valve closed unless the alarm is active.","good":"경보가 작동하는 경우를 제외하고 밸브를 닫아 두어라.","bad":"경보가 작동할 때만 밸브를 닫아 두어라."},
+  {"id":"uncertainty","source":"The absence of evidence is not evidence of absence.","good":"증거가 없다는 사실이 부재의 증거는 아니다.","bad":"증거가 없다는 사실은 부재의 증거이다."},
+  {"id":"quantifier","source":"At least one component must remain active.","good":"적어도 하나의 구성 요소는 활성 상태를 유지해야 한다.","bad":"최대 하나의 구성 요소만 활성 상태를 유지해야 한다."},
+  {"id":"sequence","source":"Remove the cover and then disconnect the cable.","good":"덮개를 제거한 다음 케이블을 분리한다.","bad":"케이블을 분리한 다음 덮개를 제거한다."},
+  {"id":"exception","source":"All groups improved except the untreated group.","good":"치료하지 않은 집단을 제외한 모든 집단에서 개선이 나타났다.","bad":"치료하지 않은 집단을 포함한 모든 집단에서 개선이 나타났다."}
+]

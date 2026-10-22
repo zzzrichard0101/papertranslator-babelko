@@ -1,5 +1,106 @@
 독립 프로젝트: PaperTranslator-BabelKO 0.1
 
+Current adapter: ko-hybrid-4 / native-passthrough-7.
+Explicit checkpoint previews are exported by babelko.preview, outside the
+normal completion gate. The cache-only translator creates no HTTP client or
+model process and preserves original checkpoints/job status. It selects a
+stored final or draft only when rich-text/formula tokens remain structurally
+safe; otherwise it returns the complete source. Numeric/semantic defects are
+retained for user inspection, not certified. Shared prepare_layout keeps the
+same source flow and native page geometry. Preview metadata, unresolved issues,
+candidate selections and approximate source batch pages are separate artifacts.
+The exporter takes the application worker lock to prevent overlapping work.
+Bibliography policy bibliography-original-2 preserves identified reference
+paragraphs before native cross-page/column merging, using the original IL
+compositions in both native passes and in the single-model path. A reference
+heading needs citation structure; a standalone entry needs author/year and
+publication metadata. A new section ends preservation, and continuation pages
+need fresh entry evidence. Ordinary in-text citations remain translatable.
+Damaged OCR blocks can qualify without a clean leading author when repeated
+author/year anchors and publication metadata establish dense citation entries.
+Scattered citations inside long body prose do not qualify under that rule.
+Preserved page IDs and content hashes are recorded in Quality.json. They are
+not translated units or semantic audit passes. Completed jobs with an older
+reference policy reprocess while existing body translation checkpoints remain
+usable; raw responses and superseded checkpoints are retained as evidence.
+Unit-level validation failures no longer abort the first review pass. Other
+units continue, and a persistent queue records active keys and failed units.
+Two bounded recovery passes retry long units in smaller source fragments,
+validate the joined result and audit its complete meaning again. A recovered
+unit clears its stale failure. Unresolved units prevent replay/completion;
+transport, cancellation and system errors still propagate immediately.
+Hybrid review now uses bidirectional-evidence-3 instead of a paragraph-level
+keep verdict. Complete source and target texts are partitioned into spans.
+Execution grouped-compact-evidence-3 batches up to 18 checks and four short
+records under a conservative payload budget. Complete source/target clause
+coverage, opposite-side evidence, numeric/placeholder validation and semantic
+revision stay unchanged, so existing current evidence remains reusable. Compact
+four-field arrays are decoded into the original checked evidence records.
+Cross-record evidence is rejected; malformed groups fall back to six-check
+object responses and individual audits. Broken page/column fragments and units
+with more than 18 clauses across both sides retain the classic six-check
+single-record prompt. Known current defective evidence
+goes straight to repair before a fresh complete audit; it never counts as a
+pass. scripts/benchmark_review.py compares frozen inputs with a saved baseline
+and preserves raw responses, control errors, timings and sample agreement.
+Each check must reference existing opposite-side span IDs. The program, not
+the model, materializes exact evidence text. Missing, partial, contradictory
+and unsupported claims trigger exact local patches or checked retranslation,
+followed by a fresh audit. Three audit rounds bound recovery; unresolved
+evidence prevents completion. The same local Qwen model has separate editing
+and auditing prompts: this is not an independent-model or semantic proof.
+Checkpoint fingerprints bind both texts, context, neighbors and policy.
+The auditor requires only facts present in source units, never completions
+from neighboring fragments, title context or a remembered document version.
+Column/page-edge fragments may remain grammatically incomplete. Completed
+jobs with an older auditor revision must reprocess rather than shortcut on
+matching PDF hashes alone.
+Final native replay must contain only checked active units. A summary lists
+active keys so older recovery candidates are distinguishable from used ones.
+Post-export Korean prose n-grams are checked against tracked translations.
+Expected occurrences are counted on the tracked output page where available;
+cross-page/column tracker groups use the whole document. Identical wording
+elsewhere cannot pay for a missing mapped page. This is not exact placement
+or OCR recall certification.
+Overlapping image rectangles are unioned for scan detection; predominantly
+fragmented existing OCR on a page image triggers local re-recognition.
+Hyphenated fallback lines merge only with a nearby lowercase continuation in
+the same column. Pure-formula paragraph groups that are clearly long English
+prose are converted back to text, retaining source characters and a base
+style recovered from their dominant glyph style. Mathematical groups remain
+opaque. The native KO typesetter is adapted to select its existing CJK spacing;
+the public language code and upstream files stay unchanged.
+Public selected-page corpus and authored semantic controls are reproducible
+with scripts/accuracy_corpus.py and scripts/evaluate_meaning.py.
+Before native formula/style analysis, embedded interleaved glyph runs split
+by font/color are reunited into source paragraphs in physical reading order.
+Only same-XObject, substantially overlapping, embedded A-B-A runs qualify;
+cross-column and duplicate overprint cases are excluded. All native glyphs
+continue through the upstream formula/style parser. This restores omitted
+modality/link fragments in the complete source presented to the translator.
+Short fallback fragments at a detected text-region edge have a separate
+same-baseline, same-size, unique-neighbor recovery path. Subsequent line
+pieces merge only within that detected region; table cells and ambiguous
+neighbors are excluded. A deterministic retained-prose guard also rejects
+lowercase English clauses copied into a Korean candidate, while leaving
+proper names, URLs and opaque tokens available for preservation.
+Raw text paragraphs spanning multiple isolated bullet markers split at
+uniquely matched marker rows before style/math analysis. Original markers
+stay untouched and continuation rows remain with their item. This avoids
+collapsing list bodies while their separately extracted bullets stay behind.
+Marker-only groups may contain many bullets, not just one; actual glyph ink
+boxes are used instead of symbol-font advance boxes for row matching.
+Repeated segmented horizontal PDF rules provide conservative table cells.
+Aligned fallback lines merge inside those cells, splitting at numbered entry
+headings and larger paragraph gaps. Source composition objects and equations
+are not flattened. Numeric cells and already structured native paragraphs
+remain separate. Explicit percent-point values must match their target units,
+and uppercase numbered table-entry identifiers survive translation verbatim.
+Rotated native input pages have explicit transformation records; metadata
+rotation is restored on Korean output where canonical reading coordinates
+were used. Bilingual composition normalizes temporary in-memory page views,
+preserving the file containing the original source.
+
 기존 PaperTranslator-Public/Windows와 설치본은 유지합니다. 중단된 의미 대응 개발 변경은 기존 작업 폴더에 그대로 보존하며 새 엔진에 섞지 않습니다.
 
 PDFMathTranslate-next(고정 커밋)의 SettingsModel, OpenAITranslator/BaseTranslator, 캐시·서식 자리표시자와 create_babeldoc_config를 실제 사용합니다.
@@ -13,9 +114,61 @@ BabelDOC(고정 커밋)의 PDF 구조 분석, DocLayout-YOLO 배치 인식, 문�
 여러 본문 줄에서 두 열의 위치가 충분히 관찰되면 왼쪽 열 전체 다음 오른쪽 열 순서로 입력을 구성합니다. 전체 폭 제목은 세로 구간의 경계로 유지하며 근거가 약한 단일 열의 들여쓰기는 열로 나누지 않습니다.
 BabelDOC AsyncCallback의 finish-event 대기 경쟁은 동기 엔진 future의 반환값을 기다리는 진행 어댑터로 회피합니다. 실제 완료/예외를 기준으로 판정하며 원문/번역에는 개입하지 않습니다.
 완료 시 저장된 번역 추적 기록의 입력별 출력 존재 여부와 번역기 최종 실패를 함께 검사합니다. 이 검사는 인식되지 않은 원문의 누락이나 의미 정확도를 인증하지 않습니다.
-본문 의미·OCR 누락을 완전히 검증하지는 못합니다. 자동 용어 추출·다중 모델 교정과 종전의 모든 기능은 아직 이식하지 않았습니다. 새로운 엔진의 속도·정확도 우위도 실측 전제이며 보증하지 않습니다.
+본문 의미·OCR 누락을 완전히 검증하지는 못합니다. 자동 용어 추출과 종전의 모든 기능은 아직 이식하지 않았습니다. 새로운 엔진의 속도·정확도 우위도 실측 전제이며 보증하지 않습니다.
 
-모델/런타임은 이미 설치된 무료 로컬 모델의 경로·SHA256을 별도 설정에 가져와 읽기 전용으로 공유합니다. 기본은 설치된 Qwen 27B이며 기존 앱의 모델/설정을 변경하지 않습니다.
+모델/런타임은 이미 설치된 무료 로컬 모델의 경로·SHA256을 별도 설정에 가져와 읽기 전용으로 공유합니다. 결합 경로는 Hy-MT2 30B-A3B 초벌 후 Qwen 27B 교정이며 기존 앱의 모델/설정을 변경하지 않습니다.
 새 데이터 기본 위치는 LocalAppData/PaperTranslatorBabelKO. 추론은 인증된 127.0.0.1 전용, worker의 외부 연결/DNS는 자산 준비 후 차단합니다. 폰트·배치 모델 자산 준비에는 인터넷을 사용하며 PDF 텍스트를 전송하지 않습니다.
 
 한국어 조판/스캔/2단/표의 개발 검증과 실제 모델 결과는 로컬 work/와 test_vault/에 남깁니다. Git에는 원문·결과·모델·개인 경로·키를 넣지 않습니다.
+
+2026-10-21 adapter revision ko-hybrid-3:
+Hy-MT2 receives a specialist translation-only prompt, not JSON batching or title
+context that the specialist may translate as target. Qwen receives only source
+title hints extracted from native prompts, never the native JSON instructions
+or Chinese protocol example as document context. Draft requests are per unit;
+Qwen reviews batches of up to four complete source/draft units, returning keep
+or source-evidenced exact substring patches. Invalid/overlapping patches and
+failed number/style/code/language checks trigger unit-level retranslation.
+Long units are partitioned at prose sentence boundaries outside rich styles,
+and their final strings are rejoined before native IL parsing. All pieces are
+checkpointed/reviewed; neither references nor tail sentences are discarded to
+fit an output cap. Specialist requests preserve Latin personal names/citations.
+
+The adapter deep-copies pre-translation IL pages, runs the native translator
+for draft collection, releases Hy, starts Qwen once, reviews the checkpoints,
+then replays final records through a fresh native IL translator on pristine
+pages and restored source title snapshots. This avoids custom layout and
+model swapping per paragraph. Full raw responses and decisions remain local.
+Checked retranslation receives native formula meanings as hints, never output
+content. On repeated token loss, the model returns schema-constrained prose
+segments and the program inserts the original protected tokens in order.
+Repeated source vocabulary supports narrow joined/split caption-word repair;
+it never substitutes hand-authored target translations. Exact quantity pairing
+accepts shared scaled ranges without relaxing signs or endpoint multiplicity.
+Qwen MTP is enabled only for the previously tested exact model SHA256 and
+runtime b11718. Other weights/runtimes retain ordinary decoding.
+
+The get_translate_input adapter exposes a day accidentally grouped with a
+bullet only before a named month plus four-digit year, preserving the bullet
+glyph and leaving mathematical formulas untouched. Superscript English
+ordinal suffixes between a digit and a prose word become ordinary source
+text. This prevents opaque day placement and literal th in Korean output.
+
+No-OCR PDFs are byte copies, retaining source resource sharing, outlines and
+page transparency groups. Mixed OCR retains simple outlines and metadata.
+Dual composition restores portable direct page Group dictionaries and source
+outline page mapping. Saves deduplicate resources without clean=True content
+operator rewriting. Indirect custom color-resource dictionaries and every
+possible annotation/form are outside the current preservation proof.
+
+
+Evidence reuse execution policy
+The semantic revision is unchanged; execution policy is grouped-compact-evidence-reuse-4. Exact normalized auditor spans, label, context, neighbor source hints and protected-token meanings form the reuse key. Only complete faithful checks enter the memory. Current structural/numeric guards run before restoring and rematerializing every quoted span under the current fingerprint. Old records remain untouched.
+Before automatic target repair, preserve the complete current audit as audit_base. Target-only changes in at most two complete sentences and 25 percent of the target may retain unaffected faithful evidence. Source/context/label changes, equations, fragment boundaries, moved sentences, logic/quantity/coreference markers, or fewer than four saved checks use full review. Recheck defective/changed/adjacent spans and the transitive closure of evidence dependencies. Full current source/target stays visible to the model, with only CHECK_IDS reduced. Validate all final IDs and exact quotes; record carried IDs and base fingerprint locally. This is model evidence reuse, not a semantic correctness guarantee.
+Recovered layout candidates are checkpointed immediately, before the draft-cache early return. Restart need not rebuild an in-memory-only candidate.
+
+
+Whole-pipeline execution
+See PERFORMANCE.txt for the stage audit. Native analysis cache is pretranslation-only; model evidence remains separately bound to full translation inputs. The cache uses hash-checked per-page JSON graph blocks with globally shared object references and a commit manifest. The schema is reconstructed only from the pinned local dataclasses. Bind native prepared xrefs/raw streams/trailer roots as well as source/configuration and code identities. Never deserialize executable pickle.
+The collection pass returns source on disposable IL, with only the native duplicate-text heuristic temporarily disabled. Actual drafts remain in records and must pass all normal checks before final replay. A persisted source catalog prevents priority-executor timing alone from changing neighbor hints. The native final pass and all final-output gates remain enabled.
+A deferred authenticated local client loads/binds a stage engine on its first real request, under a lock. Source analysis and fully cached translation do not require model residency. Atomic data writes stay durable; only identical successful checkpoint payloads and redundant progress updates are omitted. Performance reports separate overlapping stage/component clocks.

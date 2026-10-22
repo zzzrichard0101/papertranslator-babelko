@@ -1,4 +1,145 @@
-BabelKO 0.1.0a1 - development verification (2026-10-20)
+BabelKO 0.1.0a1 - development verification (2026-10-21)
+
+2026-10-21 accuracy update (ko-hybrid-4 / native-passthrough-7)
+-----------------------------------------------------------
+141 regression checks passed, including bidirectional evidence IDs, bounded
+automatic repair and re-audit, context-bound cache invalidation, corrupted
+source checkpoint rejection, blank tracker rejection, rotated page bounds,
+duplicate/missing rendered prose and source typography recovery.
+Hybrid synthetic worker integration passed with actual BabelDOC/OCR/export.
+An injected export defect removes Korean glyphs after translation; the worker
+must reject completion despite successful model checks. This test passed.
+
+The previous evidence-2 local Qwen auditor detected all 16 authored semantic defects and
+accepted all 16 faithful controls. Automatic repairs passed the model evidence
+and structure gates for all 16 defect cases. These are development controls,
+not an independent accuracy certification; a separately authored reserved
+set is evaluated without feeding its reference translations to the program.
+The separate reserved set passed 20/20 judgments (10 faithful, 10 defective),
+with 10 automatic repairs passing the evidence/structure gates. Combined:
+26/26 planted defects detected, 26/26 faithful controls accepted. Repair
+acceptance uses the same local auditor; it is not expert semantic certification.
+
+External diversity corpus: ACL BART, JMLR imbalanced-learn, NIST AI RMF,
+NASA Apollo press kit, RFC 9000, Adam, plus an authored six-page layout
+control. Public-document samples total eleven pages; controls add six.
+Original URLs, selected physical pages, downloaded SHA256, raw responses,
+failed attempts and rendered results remain local in test_vault. No timing
+comparison is performed. Completed rechecks are recorded in its assessment.
+
+Defects found outside the user's examples led to general pipeline fixes:
+joined month/day extraction, literal contact identifiers, plural zeros,
+fragmented pre-existing OCR, hyphenated line-level fallback paragraphs,
+prose/running titles misclassified as formulas, missing recovered base styles,
+KO language recognition in native CJK typesetting, and rotated coordinate
+validation. Post-export prose checks now track page and multiplicity where
+the native tracker provides a page map; cross-page/column groups remain global.
+These checks do not prove exact placement, independent meaning or OCR recall.
+
+RFC inspection found interleaved font/color runs (including MUST and links)
+split into overlapping paragraphs. A pre-formula adapter now reunites only
+embedded A-B-A glyph runs on shared baselines, preserving glyphs before native
+style/formula analysis. Separate columns and overprinted duplicates do not
+merge. This repairs both missing sentence context and reflow collisions.
+Visual inspection also found a word split across fallback/text boundaries
+that the earlier evidence audit had accepted. Short fallback edges now attach
+only to a unique adjacent text region on a shared baseline; nearby pieces of
+that same region rejoin across lines. Tables and ambiguous boundaries remain
+separate. A deterministic check rejects copied lower-case prose clauses
+hidden inside otherwise Korean output. Regression cases cover glyph counts,
+ambiguous gutters, table exclusion, names and protected tokens.
+Separately extracted list markers previously stayed at original rows while
+the body was translated as one collapsing paragraph. Repeated physical bullet
+markers now partition raw text into individual list items before style/math
+analysis. Continuation rows stay with their item and original marker glyphs
+remain intact. Single markers, mathematical dots and other-column markers
+cannot trigger a split.
+An additional functional recheck exposed an auditor false positive: it
+required an absent continuation at a column boundary, then alternated between
+adding that context and deleting it as unsupported. Evidence-3 explicitly
+limits required facts to the exact source units. Separate fragment controls
+cover absent objects, continuing clauses and conditional fragments. A newer
+auditor revision also invalidates a completed-job shortcut even when all
+saved PDF hashes still match.
+
+Evidence-3 real-model controls: 32/32 development judgments, 19/20 in the
+separately authored set, and 6/6 boundary judgments. The retained failure was
+percent versus percentage points. Explicit value/unit pairing now rejects
+that confusion (including swapped values and signs) independently of model
+approval. Re-evaluation of the combined program passed 20/20 with 10 automatic
+repairs; its model-only component still scored 19/20. The original miss is
+retained, not removed from the report. The previously separate set has now
+informed this fix and is no longer an untouched holdout.
+
+For ruled tables, repeated PDF line junctions prove row/column cell bounds.
+Only aligned fallback text inside those cells joins into coherent paragraphs;
+separate numbered entry headings remain separate and numeric cells do not
+merge. Source composition objects, formulas and geometry stay intact. Twelve
+cell paragraphs were recovered in the NIST sample; the same detector found
+no qualifying cell grids in the other selected documents. Entry identifiers
+such as uppercase function names plus section numbers must survive unchanged.
+Isolated caption punctuation also rejoins its caption before translation.
+
+Final selected-page recheck: 7/7 cases passed all current automated gates,
+17/17 source faces matched pixel-for-pixel, and 283 tracked translation inputs
+had no missing output. All seventeen Korean pages were rendered and visually
+inspected for layout; no target text or PDF was manually edited. The four
+controlled numeric table values stayed within 2.85 points of source positions.
+Both fresh synthetic integration modes passed; injected post-export Korean
+prose loss was rejected. GUI smoke passed. Public working-source audit found
+no private paths, credentials or generated binaries among 38 changed files.
+These are selected-page functional checks, not exhaustive expert semantic
+grading. OCR scan typography is reconstructed and is not an exact font replica.
+Native rotated inputs use recorded canonical coordinates with export rotation
+restoration; composition normalizes only in-memory source/target views.
+Previous OCR-revision jobs require a new job. The evaluation harness preserves
+previous jobs and can reuse text-bound checkpoints for functional rechecks;
+these runs are explicitly not fresh speed comparisons.
+
+Historical adapter-3 verification follows:
+
+2026-10-21 adapter update (ko-hybrid-3)
+-------------------------------------
+89 regression checks passed. Single-model and hybrid synthetic worker
+integrations passed using actual BabelDOC/OCR/PDF export, a loopback test
+translator and no real model accuracy claims. Hybrid integration verifies
+draft save, owned-engine close before editor start, invalid draft repair,
+source hashes, numeric table cells and completed-job replay without requests.
+Native input passthrough and CMYK/outline composition have regression coverage.
+GUI smoke passed. Changed public source audit found no personal paths or keys.
+
+Hybrid is now selectable in the GUI/CLI. Hy-MT2 produces translation-only
+drafts; Qwen compares all nonliteral units against sources and title context,
+returning only necessary edits. Invalid edits or drafts trigger checked
+unit-level retranslation. Final records replay through pristine native IL.
+Long prose/reference units split at sentence boundaries outside rich styles,
+then join before native composition. This avoids output truncation and full
+batch retries. Formula/style/number/code checks remain active.
+
+Source typography repairs expose grouped prose dates and flatten superscript
+English ordinal suffixes. The day and ordinal fixes are general input rules,
+not target PDF edits or document-specific translation replacements. Full raw
+responses and excluded development trials remain in ignored local test_vault.
+Model review/structural checks do not certify semantic accuracy or OCR recall.
+
+Formula meanings now accompany checked retranslation. Repeated placeholder
+loss uses program-inserted protected tokens between schema-constrained prose
+segments. Source-vocabulary evidence repairs joined/split caption words before
+translation. Numeric validation recognizes exactly equivalent scaled ranges
+(1-5 million / 100만-500만) without accepting changed or missing endpoints.
+Function identifiers remain exact while Korean particles may follow them.
+
+At the user's request, further timing comparisons stopped. Cached functional
+recovery is not a fresh speed result; no complete new-paper speed advantage is
+claimed. Development trials and failed candidates remain local and excluded.
+
+Final functional checks completed on the five-page notes and full fourteen-page
+two-column paper. Native tracking recorded 104 and 486 translated input units,
+with zero tracked units lacking output. Final checkpoint number/token/code
+contracts passed; previous recovery candidates have final source replacements.
+Source hashes and all nineteen bilingual original faces matched. All nineteen
+Korean pages were rendered with Poppler and visually inspected for page layout.
+These checks establish the tested structure, not independent semantic recall.
 
 Scope: separate Windows source application; original PaperTranslator remains installed.
 Pinned upstream commits and source licenses: upstream.lock.json and NOTICE.txt.
@@ -30,15 +171,40 @@ machine model paths are excluded from Git.
 Limitations: no independent semantic benchmark or proof of complete OCR recall.
 White background printed English scans are the tested OCR scope. Colored paper,
 handwriting, complex diagrams, merged tables and long-document fault recovery
-need more coverage. The previous application's full multi-model correction,
-API configuration and Obsidian features have not been ported.
+need more coverage. The previous application's complete advanced quality
+suite, API configuration and Obsidian features have not been ported.
 
 Reproduce after setup:
   uv run pytest -q
   uv run python scripts/integration.py
+  uv run python scripts/integration.py --mode hybrid
   uv run python scripts/smoke_gui.py
   uv run python scripts/audit_public.py  (after staging intended public sources)
 
 Real inference: scripts/translate.py accepts an existing PDF, existing output
 directory, physical page selection and OCR auto/off/force. Full raw responses
 and tracker evidence are retained under the separate local application root.
+
+
+2026-10-21 checkpoint-preserving scan recovery
+Added hash-verified, CPU-only RapidOCR 1.4.4 as an independent original-image reader. Re-read risky OCR bands rather than retranslating the whole document. Persist source-bound page evidence; require exact two-sided anchors for digit/letter corrections.
+Keep Original.pdf and Input.pdf unchanged. Build a separately hashed, losslessly compressed Layout-input.pdf. Repair stretched synthetic text metrics without horizontal glyph morph. Remove source runs only with replacement coverage or positive rule/noise evidence; retain unmatched table rows and neighboring text. Restore agreed legacy word spacing and preserve long table rules.
+Reuse exact prose candidates after geometry/style changes, with fresh semantic checks. Do not inherit old assurance for a changed source/context. Revalidate saved candidates before retrying a stale failure; fixed explicit Roman section/war ordinals, compound cardinals, and lexical hyphens while retaining numeric/sign guards.
+Validation: 175 pytest tests passed; native hybrid synthetic integration passed, including checkpoint replay without requests and rejection of an exporter that loses translated text. Local source render checks showed repaired divider artifacts and inflated word size; complex scanned tables still require the final pipeline checks. This is not whole-book semantic certification. No target translations were manually edited.
+Before resuming the existing book job, archived 4,719 checkpoint files (4,413 active units; 4,163 previously accepted; 63 pending) and verified both original/input hashes. The same job was resumed. New recovery and validation results are recorded locally; no book pages or model responses are published.
+
+
+2026-10-21 evidence reuse and repair review
+Keep semantic revision bidirectional-evidence-3; advance only the execution policy. Reuse complete faithful evidence for identical canonical auditor inputs, including all meaning hints. Restrict target-only delta review to small complete independent-sentence changes, retaining full review for scope, references, quantities, formulas, fragments and changed source/context. All previous defects and evidence dependents are rechecked; the model still sees the complete paragraph. Save the prior audit and carry-forward provenance. Checkpoint recovered layout candidates before returning them to native draft collection.
+Validation: 199 pytest tests passed, including new omission, changed context, scope/quantity/boundary fallback, transitive dependency invalidation, structural-tag rejection, and restart persistence. Actual BabelDOC hybrid synthetic integration passed (OCR scan only, original hash, invalid-candidate repair, no-call replay, and intentional export-loss rejection).
+Actual installed Qwen with the existing editor snapshot/MTP: four authored repair controls, full versus reuse execution, alternating order. The initial full audit detected the deliberately incorrect invoice noun. All eight subsequent verdicts matched the expected normal/wrong-action/negation/quantity cases. Full execution used 16 requests / 36.668 seconds; reuse used 12 / 27.531 seconds. The two eligible independent noun/action repairs used two requests versus four (4.419/4.903 versus 8.759/9.444 seconds); negation and quantity retained four-request full audits. This small controlled result is not whole-book throughput or independent accuracy certification. Inputs and all raw responses remain in ignored test_vault.
+Before applying to the running book, saved 8,720 checkpoint records plus state/pending/summary, verified unchanged Original/Input hashes, and resumed the same job. The 313 cached supplementary OCR pages remain available. Layout/analysis still reruns on resume; changed real context continues to require fresh evidence. No user target text was manually edited. Changed-source privacy scan passed.
+
+
+2026-10-21 whole-pipeline efficiency pass
+Audited input verification, initial/supplementary OCR, native analysis, draft collection, catalog order, model loading/inference, checkpoint/progress I/O, native typesetting, PDF composition and final validation as one change set. See docs/PERFORMANCE.txt for decisions and limits.
+Primary OCR now persists source-bound per-page lossless caches, validates OCR data once per needed run and saves a compressed searchable input. Preserve existing Input.pdf files. Native pretranslation IL uses a non-executable JSON graph cache bound to input, prepared xrefs/streams/trailer roots, configuration and adapter/upstream versions. Preserve shared character/style references across pages; verify serialization roundtrips and fall back on cache mismatch/corruption. Collection on disposable IL now passes original source, while real drafts stay checkpointed; final replay still uses checked Korean. Preserve the catalog order across priority-worker timing changes.
+Load a model only at its first actual request; a cache-only worker resume can load neither Hy nor Qwen. Deduplicate unchanged checkpoint writes, throttle only progress updates, and reuse extracted output text across final checks. Per-run performance.json and Quality.json summarize observed stages, component timings, model requests and token counts.
+Validation: 212 pytest tests passed. Both actual native single-model and hybrid synthetic integrations passed a forced worker resume with zero new model requests/loads and identical extracted words, coordinates and rendered pixels. The hybrid integration also rejected intentional loss of all translated text. These HTTP-stub model integrations verify pipeline behavior, not model semantic accuracy. No user target strings were manually patched.
+CPU OCR concurrency was tested and rejected as a default: eight synthetic pages took 22.502 s serial / 26.813 s with two workers; 32 pages took 79.148 / 93.810 s. Outputs agreed. Keep serial default; explicit workers exists only for controlled profiling. Do not enable a slower method just because it can run in parallel.
+The ongoing book worker was deliberately left running to avoid another analysis/restart cost. Newly launched workers and checkpoint resumes automatically use the new implementation. The first run must create an analysis cache before a later resume benefits from it. No whole-book speedup percentage is asserted. Changed-source privacy scan passed.

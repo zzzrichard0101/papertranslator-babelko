@@ -1,9 +1,11 @@
-import asyncio,copy,datetime,json,os,shutil,time,uuid
+import asyncio,copy,datetime,json,os,shutil,time,uuid,threading
+from contextlib import ExitStack,nullcontext
 import psutil
 from pathlib import Path
 import pymupdf as fitz
 from .storage import root,project,read,save,digest
 from .upstream import prepare,assets
+from .policy import PROTOCOL,OCR_REVISION
 
 
 def selected_pages(spec,count):
@@ -21,7 +23,7 @@ def selected_pages(spec,count):
     return sorted(chosen)
 
 
-def create(source,destination,pages='',ocr='auto'):
+def create(source,destination,pages='',ocr='auto',mode='auto',experimental_pipeline=False):
     from .engine import registry,models
     source=Path(source).resolve();destination=Path(destination).resolve()
     if source.suffix.lower()!='.pdf' or not source.is_file():raise ValueError('PDF 파일을 선택하세요.')
@@ -32,13 +34,23 @@ def create(source,destination,pages='',ocr='auto'):
         if doc.needs_pass:raise ValueError('암호를 해제한 PDF가 필요합니다.')
         if len(doc)>2000:raise ValueError('2,000쪽 이하 PDF를 선택하세요.')
         selected=selected_pages(pages,len(doc))
-    reg=registry();model=copy.deepcopy(reg['models']['qwen38'])
+        rotated=[i for i in selected if doc[i].rotation]
+    reg=registry()
+    if mode not in {'auto','hybrid','qwen'}:raise ValueError('번역 방식 설정 오류')
+    if mode=='auto':mode='hybrid' if {'hy30b','qwen38'}<=reg['models'].keys() else 'qwen'
+    if mode=='hybrid' and not {'hy30b','qwen38'}<=reg['models'].keys():raise ValueError('Hy-MT2 30B와 Qwen 27B 모델이 모두 필요합니다.')
+    if experimental_pipeline and mode!='hybrid':raise ValueError('실험 파이프라인은 하이브리드 방식에서 사용하세요.')
+    model=copy.deepcopy(reg['models']['hy30b' if mode=='hybrid' else 'qwen38'])
     folder=root()/'jobs'/uuid.uuid4().hex;folder.mkdir(parents=True)
     shutil.copyfile(source,folder/'Original.pdf');sha=digest(source)
     if digest(folder/'Original.pdf')!=sha:raise RuntimeError('원본 복사 중 파일이 바뀌었습니다.')
-    state=dict(protocol='ko-preserve-3',ocr_revision='visible-ocr-reading-order-4',id=folder.name,source=str(source),source_sha256=sha,title=source.stem,destination=str(destination),pages=pages,selected=selected,
+    state=dict(protocol=PROTOCOL,ocr_revision=OCR_REVISION,mode=mode,id=folder.name,source=str(source),source_sha256=sha,title=source.stem,destination=str(destination),pages=pages,selected=selected,rotated_source_pages=rotated,
         ocr=ocr,status='queued',stage='대기',progress=0,output=None,snapshot=dict(model=model,runtime_dir=reg['runtime_dir'],runtime_release=reg['runtime_release']),
         upstream=read(project()/'upstream.lock.json'),created_at=datetime.datetime.now(datetime.timezone.utc).isoformat())
+    if mode=='hybrid':state['snapshot'].update(editor=copy.deepcopy(reg['models']['qwen38']),mtp=True)
+    if experimental_pipeline:
+        state['snapshot']['experimental_pipeline']=True
+        state['snapshot']['review_slots']=2
     save(folder/'state.json',state);return folder
 
 
@@ -48,10 +60,23 @@ def compose(original,korean,destination,selected):
         for i,index in enumerate(selected):
             a=src[index];b=ko[i]
             if abs(a.rect.width-b.rect.width)>.1 or abs(a.rect.height-b.rect.height)>.1:raise RuntimeError('원문·번역 쪽 크기 불일치')
+            # show_pdf_page imports page contents in unrotated coordinates.
+            # Normalize the in-memory copies while preserving their appearance.
+            if a.rotation:a.remove_rotation()
+            if b.rotation:b.remove_rotation()
             page=dual.new_page(width=a.rect.width*2,height=a.rect.height)
             page.show_pdf_page(fitz.Rect(0,0,a.rect.width,a.rect.height),src,index)
             page.show_pdf_page(fitz.Rect(a.rect.width,0,a.rect.width*2,a.rect.height),ko,i)
-        dual.save(destination)
+            from .pdf_preservation import copy_group
+            copy_group(src,a,dual,page)
+        mapping={index+1:i+1 for i,index in enumerate(selected)}
+        toc=[row[:2]+[mapping[row[2]]] for row in src.get_toc() if row[2] in mapping]
+        if toc:
+            # Missing parent entries in a selection must not create level gaps.
+            previous=0
+            for row in toc:row[0]=min(row[0],previous+1);previous=row[0]
+            dual.set_toc(toc)
+        dual.save(destination,garbage=4,deflate=True,clean=False)
 
 
 def run(folder):
@@ -59,10 +84,25 @@ def run(folder):
     folder=Path(folder).resolve()
     if folder.parent!=(root()/'jobs').resolve():raise ValueError('허용되지 않은 작업 경로')
     state=read(folder/'state.json')
-    if state.get('protocol')!='ko-preserve-3' or state.get('ocr_revision')!='visible-ocr-reading-order-4':raise RuntimeError('이 작업의 처리 버전이 다릅니다. 원본으로 새 작업을 시작하세요.')
+    if state.get('protocol')!=PROTOCOL or state.get('ocr_revision')!=OCR_REVISION:raise RuntimeError('이 작업의 처리 버전이 다릅니다. 원본으로 새 작업을 시작하세요.')
     if state.get('status')=='completed' and state.get('output_hashes'):
         out=Path(state['output'])
-        if digest(folder/'Original.pdf')==state['source_sha256'] and all((out/name).exists() and digest(out/name)==sha for name,sha in state['output_hashes'].items()):return state
+        from .assurance import REVISION
+        from .references import REVISION as REFERENCES_REVISION
+        current=state.get('mode')!='hybrid'
+        if not current and (out/'Quality.json').is_file():
+            current=read(out/'Quality.json').get('meaning_assurance',{}).get('revision')==REVISION
+        current=current and (out/'Quality.json').is_file() and read(out/'Quality.json').get('references',{}).get('revision')==REFERENCES_REVISION
+        if current and state.get('snapshot',{}).get('experimental_pipeline'):
+            from .region_ledger import REVISION as REGION_REVISION
+            from .document_context import REVISION as CONTEXT_REVISION
+            quality=read(out/'Quality.json')
+            current=quality.get('region_coverage',{}).get('revision')==REGION_REVISION and quality.get('region_coverage',{}).get('status')=='passed' and quality.get('document_context',{}).get('revision')==CONTEXT_REVISION
+        if current and state.get('ocr_pages'):
+            from .scan_evidence import REVISION as SCAN_REVISION,LAYOUT_REVISION
+            scan=read(out/'Quality.json').get('scan_recovery',{})
+            current=scan.get('revision')==SCAN_REVISION and (not scan.get('layout') or scan['layout'].get('revision')==LAYOUT_REVISION)
+        if current and digest(folder/'Original.pdf')==state['source_sha256'] and all((out/name).exists() and digest(out/name)==sha for name,sha in state['output_hashes'].items()):return state
     began=time.perf_counter();lock=root()/'worker.lock'
     try:lock_file=lock.open('x')
     except FileExistsError:
@@ -73,26 +113,35 @@ def run(folder):
         lock.unlink();lock_file=lock.open('x')
     json.dump(dict(pid=os.getpid(),created=psutil.Process().create_time()),lock_file);lock_file.flush();os.fsync(lock_file.fileno())
     state.update(pid=os.getpid(),process_created=psutil.Process().create_time())
+    from .performance import Performance,StateWriter
+    performance=Performance(folder);state_writer=StateWriter(folder/'state.json')
     def progress(message,percent=None):
         state.update(stage=message,elapsed_seconds=round(time.perf_counter()-began,2))
-        if percent is not None:state['progress']=percent
-        save(folder/'state.json',state)
+        if percent is not None:state['progress']=max(state.get('progress',0),percent)
+        performance.stage(message);state_writer.write(state)
     cancel=lambda:(folder/'cancel').exists()
     try:
         if cancel():raise InterruptedError('취소됨')
         if digest(folder/'Original.pdf')!=state['source_sha256']:raise RuntimeError('작업 원본 해시 불일치')
         state['status']='preparing';state['progress']=0;state.pop('error',None);progress('글꼴·배치 모델 확인')
-        prepare();asset_report=assets(progress)
+        with performance.measure('assets'):
+            prepare();asset_report=assets(progress)
         from .ocr import prepare as prepare_ocr
         input_pdf=folder/'Input.pdf'
         if input_pdf.exists() and state.get('input_sha256'):
             if digest(input_pdf)!=state['input_sha256']:raise RuntimeError('저장된 OCR 입력 해시 불일치')
         else:
             if input_pdf.exists():input_pdf.rename(folder/('Input-recovery-'+uuid.uuid4().hex[:8]+'.pdf'))
-            state['ocr_pages']=prepare_ocr(folder/'Original.pdf',input_pdf,state['ocr'],progress,cancel,selected=state['selected'])
+            transformations=folder/'input-transformations.json'
+            with performance.measure('ocr.primary'):
+                state['ocr_pages']=prepare_ocr(folder/'Original.pdf',input_pdf,state['ocr'],progress,cancel,selected=state['selected'],report_path=transformations)
+            state['input_transformations']=read(transformations)
             state['input_sha256']=digest(input_pdf);progress('번역 입력 검증 완료')
         from .offline import install
         install()
+        from .scan_evidence import evidence,layout_input
+        with performance.measure('ocr.supplementary'):scan_rows=evidence(folder,state['selected'],progress,cancel)
+        with performance.measure('ocr.layout_recovery'):input_pdf=layout_input(folder,scan_rows,progress,cancel) if scan_rows else input_pdf
         # PDFMathTranslate's native configuration factory is the client bridge.
         from pdf2zh_next.config.model import SettingsModel
         from pdf2zh_next.config.translate_engine_model import OpenAISettings
@@ -102,9 +151,12 @@ def run(folder):
         from babeldoc.format.pdf.high_level import async_translate,init
         init()
         state['status']='translating';progress('로컬 번역 엔진 준비')
-        with LocalEngine(folder,cancel=cancel,snapshot=state['snapshot']) as engine:
-            engine.start(progress)
-            settings=SettingsModel(translate_engine_settings=OpenAISettings(openai_model=engine.model['id'],openai_base_url=engine.url,openai_api_key=engine.key,openai_timeout="300"))
+        with ExitStack() as engines:
+            engine=engines.enter_context(LocalEngine(folder,cancel=cancel,snapshot={**state['snapshot'],'review_slots':1}))
+            # No model load for CPU analysis or a cache-only draft/replay. The
+            # reference factory receives our client, so this bootstrap URL is
+            # never contacted; the authenticated engine binds before a request.
+            settings=SettingsModel(translate_engine_settings=OpenAISettings(openai_model=engine.model['id'],openai_base_url='http://127.0.0.1:1/v1',openai_api_key=engine.key,openai_timeout="300"))
             settings.translation.lang_in='en';settings.translation.lang_out='ko';settings.translation.qps=1;settings.translation.pool_max_workers=1
             settings.translation.term_qps=1;settings.translation.term_pool_max_workers=1
             settings.translation.no_auto_extract_glossary=True;settings.translation.min_text_length=1
@@ -113,17 +165,63 @@ def run(folder):
             settings.pdf.pages=state['pages'] or None;settings.pdf.only_include_translated_page=True;settings.pdf.watermark_output_mode='no_watermark'
             settings.pdf.no_dual=True;settings.pdf.ocr_workaround=False;settings.pdf.skip_scanned_detection=bool(state.get('ocr_pages'))
             settings.pdf.translate_table_text=False
-            translator=KoreanTranslator(settings,BaseRateLimiter(),folder,cancel)
-            translator.add_cache_impact_parameters('snapshot',dict(model=engine.model,upstream=state['upstream'],protocol='ko-preserve-3'))
+            from .hybrid import HybridTranslator,staged_layout
+            translator_class=HybridTranslator if state['mode']=='hybrid' else KoreanTranslator
+            translator=translator_class(settings,BaseRateLimiter(),folder,cancel)
+            translator.performance=performance
+            translator.experimental_pipeline=bool(state['snapshot'].get('experimental_pipeline'))
+            translator.review_workers=state['snapshot'].get('review_slots',1) if translator.experimental_pipeline else 1
+            if translator.experimental_pipeline:
+                from .region_ledger import RegionLedger
+                translator.region_ledger=RegionLedger(folder)
+            translator.scan_evidence=scan_rows
+            translator.layout_input=input_pdf
+            translator.add_cache_impact_parameters('snapshot',dict(snapshot=state['snapshot'],upstream=state['upstream'],protocol=state['protocol']))
+            active=[engine]
+            bound=[None]
+            binding_lock=threading.Lock()
+            def before_request():
+                with binding_lock:
+                    target=active[-1]
+                    if bound[0] is target:return
+                    with performance.measure('engine.'+target.model.get('key','local')):
+                        try:target.start(progress)
+                        except RuntimeError:
+                            if target.registry.get('review_slots')!=2:raise
+                            target.close();target.registry={**target.registry,'review_slots':1}
+                            progress('동시 검수 엔진 적재 실패 · 전체 문맥을 유지한 단일 슬롯으로 전환')
+                            target.start(progress)
+                    translator.client.close()
+                    import httpx,openai
+                    translator.client=openai.OpenAI(base_url=target.url,api_key=target.key,timeout=300,max_retries=0,http_client=httpx.Client(trust_env=False,timeout=300))
+                    translator.model=target.model['id'];bound[0]=target
+            translator.before_request=before_request
+            def switch_to_editor():
+                progress('초벌 저장 완료 · Qwen 교정 모델 준비')
+                engine.close()
+                snapshot={**state['snapshot'],'model':state['snapshot']['editor']}
+                editor=engines.enter_context(LocalEngine(folder,cancel=cancel,snapshot=snapshot));active.append(editor)
+                translator.model=editor.model['id']
             # Inject the authenticated local client into the reference factory.
             # This avoids its separate generic health request/client and proxy state.
             from unittest.mock import patch
             with patch('pdf2zh_next.high_level.get_translator',lambda _:translator),patch('pdf2zh_next.high_level.get_term_translator',lambda _:translator):
                 config=create_babeldoc_config(settings,input_pdf)
             config.translator=translator;config.term_extraction_translator=translator;config.working_dir=folder/'intermediate';config.working_dir.mkdir(exist_ok=True);config._is_temp_dir=False
+            config.add_formula_placehold_hint=True
             # Keep original labels and geometry; no diagnostic boxes in user PDFs.
             from .progress import translate
-            try:result=translate(config,progress,cancel,engine.close)
+            def layout_progress(message,percent=None):
+                if percent is not None and state['mode']=='hybrid' and percent>=39:
+                    if translator.phase=='draft':percent=39+(min(percent,85.5)-39)*21/46.5
+                    elif translator.phase=='replay':percent=85+(percent-39)*4/46.5 if percent<85.5 else 89+(percent-85.5)*9/14.5
+                progress(message,percent)
+            try:
+                from .references import preserve as preserve_references
+                from .layout_cache import native_layout_cache
+                from .region_ledger import capture as capture_regions
+                with preserve_references(folder),staged_layout(translator,switch_to_editor,progress) if state['mode']=='hybrid' else nullcontext(),native_layout_cache(folder,input_pdf,config,progress,performance),capture_regions(translator.region_ledger) if translator.experimental_pipeline else nullcontext():
+                    result=translate(config,layout_progress,cancel,lambda:[e.close() for e in active])
             finally:translator.client.close()
             if cancel():raise InterruptedError('취소됨')
             if result is None or not result.mono_pdf_path:raise RuntimeError('번역 PDF 생성 결과가 없습니다.')
@@ -131,23 +229,55 @@ def run(folder):
             out=Path(state['destination'])/(state['title'][:90]+' - BabelKO '+state['id'][:8]);
             if out.exists():out=out.with_name(out.name+'-'+uuid.uuid4().hex[:6])
             out.mkdir()
-            shutil.copyfile(folder/'Original.pdf',out/'Original.pdf');shutil.copyfile(result.mono_pdf_path,out/'Korean.pdf')
-            compose(folder/'Original.pdf',out/'Korean.pdf',out/'Bilingual.pdf',state['selected'])
+            from .pdf_preservation import optimize
+            with performance.measure('export.optimize'):
+                shutil.copyfile(folder/'Original.pdf',out/'Original.pdf');optimize(result.mono_pdf_path,out/'Korean.pdf')
+            restore={v['source_page']-1:v['restore_rotation'] for v in state.get('input_transformations',{}).get('pages',[]) if v['restore_rotation']}
+            if restore:
+                with fitz.open(out/'Korean.pdf') as translated:
+                    for i,source_page in enumerate(state['selected']):
+                        if source_page in restore:translated[i].set_rotation(restore[source_page])
+                    translated.saveIncr()
+            with performance.measure('export.bilingual'):compose(folder/'Original.pdf',out/'Korean.pdf',out/'Bilingual.pdf',state['selected'])
             from .validation import inspect_output,tracking_status
-            checks=inspect_output(out/'Korean.pdf',state['selected'])
-            tracked=tracking_status(config.working_dir/'translate_tracking.json')
+            from .render_coverage import inspect as inspect_rendered
+            with performance.measure('validation.pdf'):
+                extracted_pages=[];checks=inspect_output(out/'Korean.pdf',state['selected'],extracted_pages,folder/'Original.pdf')
+                tracked=tracking_status(config.working_dir/'translate_tracking.json')
+                rendered=inspect_rendered(out/'Korean.pdf',config.working_dir/'translate_tracking.json',extracted_pages)
+                regions=translator.region_ledger.inspect(out/'Korean.pdf',state['selected'],folder/'Original.pdf') if translator.experimental_pipeline else None
+            if regions and regions['status']!='passed':
+                checks['status']='failed';checks['issues'].append(dict(code='spatial_region_missing',detail=regions))
+            if rendered['status']!='passed':
+                checks['status']='failed';checks['issues'].append(dict(code='rendered_prose_missing',detail=rendered))
             if tracked['status']!='passed':
                 checks['status']='failed';checks['issues'].append(dict(code='tracked_translation_missing',detail=tracked))
             if translator.hard_failures:
                 checks['status']='failed';checks['issues'].append(dict(code='translation_failed',count=len(translator.hard_failures)))
             report=dict(protocol=state['protocol'],ocr_revision=state['ocr_revision'],engine='PDFMathTranslate-next + BabelDOC',upstream=state['upstream'],source_sha256=state['source_sha256'],selected_source_pages=[i+1 for i in state['selected']],
-                translation_tracking=tracked,assets=asset_report,ocr_source_pages=[i+1 for i in state.get('ocr_pages',[])],checks=checks,requests=translator.requests,retries=translator.retries,translation_calls=translator.translate_call_count,cache_hits=translator.translate_cache_call_count,
+                translation_tracking=tracked,rendered_prose=rendered,assets=asset_report,ocr_source_pages=[i+1 for i in state.get('ocr_pages',[])],checks=checks,requests=translator.requests,retries=translator.retries,translation_calls=translator.translate_call_count,cache_hits=translator.translate_cache_call_count,
                 unresolved_translation_failures=translator.hard_failures,semantic_accuracy='not_certified',manually_edited_targets=0,seconds=time.perf_counter()-began)
+            report.update(mode=state['mode'],hybrid=getattr(translator,'stats',None))
+            if translator.experimental_pipeline:
+                report.update(region_coverage=regions,document_context=translator.document_context.report())
+            report['performance']=performance.snapshot()
+            report['layout_cache']=read(folder/'layout-cache-report.json') if (folder/'layout-cache-report.json').is_file() else {}
+            report['references']=read(folder/'reference-preservation.json')
+            report['rotation_normalized_source_pages']=[i+1 for i in state.get('rotated_source_pages',[])]
+            report['input_transformations']=state.get('input_transformations',{})
+            from .scan_evidence import REVISION as SCAN_REVISION
+            report['scan_recovery']=dict(revision=SCAN_REVISION,evidence_pages=len(scan_rows),
+                layout=read(folder/'layout-input.json') if input_pdf.name=='Layout-input.pdf' else None,
+                original_input_preserved=True)
+            if state['mode']=='hybrid':report['meaning_assurance']=translator.assurance_summary()
             save(out/'Quality.json',report);save(folder/'quality.json',report)
             state['output_hashes']={name:digest(out/name) for name in ['Original.pdf','Korean.pdf','Bilingual.pdf','Quality.json']}
-            state.update(output=str(out),status='completed' if checks['status']=='passed' else 'generated_with_issues');progress('저장 완료' if checks['status']=='passed' else '자동 검사 미통과 · 실패 근거 저장됨',100)
+            state.update(output=str(out),status='completed' if checks['status']=='passed' else 'failed');progress('저장 완료' if checks['status']=='passed' else '최종 PDF 검사 실패 · 작업 상태 저장됨',100)
+            if checks['status']!='passed':raise RuntimeError('최종 PDF 검사 오류가 남아 자동 완료를 중단했습니다. 작업 상태와 실패 근거를 저장했습니다.')
     except BaseException as exc:
         state.update(status='cancelled' if (cancel() or isinstance(exc,(InterruptedError,asyncio.CancelledError))) else 'failed',error=str(exc)[:800]);progress('취소됨' if state['status']=='cancelled' else '실패: '+str(exc)[:200])
         raise
-    finally:lock_file.close();lock.unlink(missing_ok=True)
+    finally:
+        try:state_writer.write(state,force=True);performance.flush()
+        finally:lock_file.close();lock.unlink(missing_ok=True)
     return state

@@ -1,0 +1,12 @@
+[
+  {"id":"percent_points","source":"The rate fell from 8% to 6%, a decrease of 2 percentage points.","good":"비율은 8%에서 6%로 떨어졌으며, 이는 2%포인트 감소이다.","bad":"비율은 8%에서 6%로 떨어졌으며, 이는 2% 감소이다."},
+  {"id":"blinding","source":"The observers were blinded, whereas the participants were not.","good":"관찰자는 눈가림되었지만 참가자는 그렇지 않았다.","bad":"참가자는 눈가림되었지만 관찰자는 그렇지 않았다."},
+  {"id":"confidence","source":"The interval includes zero; this does not prove the effect is exactly zero.","good":"이 구간에는 0이 포함되지만, 효과가 정확히 0이라는 것을 입증하지는 않는다.","bad":"이 구간에는 0이 포함되므로 효과가 정확히 0임이 입증된다."},
+  {"id":"protein_roles","source":"Protein A inhibited protein B in the treated cells.","good":"처리된 세포에서 단백질 A가 단백질 B를 억제했다.","bad":"처리된 세포에서 단백질 B가 단백질 A를 억제했다."},
+  {"id":"necessary_not_sufficient","source":"Authorization is necessary but not sufficient for activation.","good":"권한 부여는 활성화에 필요하지만 충분하지는 않다.","bad":"권한 부여만으로도 활성화가 가능하다."},
+  {"id":"offsetting_changes","source":"Revenue increased while profit decreased because costs rose faster.","good":"비용이 더 빠르게 늘어 매출은 증가했지만 이익은 감소했다.","bad":"비용이 더 빠르게 늘어 매출과 이익이 모두 증가했다."},
+  {"id":"prohibition_exception","source":"Do not restart during writing, even when the indicator appears idle.","good":"표시등이 유휴 상태로 보이더라도 쓰기 중에는 재시작하지 마시오.","bad":"표시등이 유휴 상태로 보이면 쓰기 중에도 재시작하시오."},
+  {"id":"endpoint_scope","source":"Values below 5 are accepted; a value of 5 is rejected.","good":"5 미만의 값은 허용되며 5는 거부된다.","bad":"5 이하의 값은 허용되며 5도 허용된다."},
+  {"id":"temperature_interval","source":"The temperature increased by 3 degrees, not to 3 degrees.","good":"온도가 3도가 된 것이 아니라 3도만큼 상승했다.","bad":"온도가 3도만큼 상승한 것이 아니라 3도가 되었다."},
+  {"id":"alternative","source":"Either the key or the certificate is required; both are not required together.","good":"키나 인증서 중 하나가 필요하며, 둘 다 함께 필요한 것은 아니다.","bad":"키와 인증서가 둘 다 함께 필요하다."}
+]

@@ -11,6 +11,7 @@ dependencies = [
   "tomlkit>=0.13,<1",
   "requests>=2.32,<3",
   "bitstring==4.3.1",
+  "rapidocr-onnxruntime==1.4.4",
 ]
 
 [dependency-groups]

@@ -48,6 +48,12 @@ class LocalEngine:
     def __init__(self,folder,key='qwen38',cancel=lambda:False,snapshot=None):
         self.folder=Path(folder);self.cancel=cancel;self.registry=snapshot or registry();self.model=dict(snapshot['model'] if snapshot else models()[key]);self.process=None;self.job=None;self.log=None
         self.key=secrets.token_urlsafe(32)
+    def capacity_args(self):
+        slots=self.registry.get('review_slots',1)
+        if type(slots) is not int or slots not in (1,2):raise ValueError('로컬 검수 슬롯 설정 오류')
+        # llama.cpp's context size is TOTAL across slots. Preserve 8192 for
+        # EACH request; neither quantize KV nor halve context to gain speed.
+        return ['-c',str(8192*slots),'-np',str(slots)]
     def __enter__(self):return self
     def start(self,progress=print):
         if any((p.info['name'] or '').lower()=='llama-server.exe' for p in psutil.process_iter(['name'])):
@@ -59,10 +65,12 @@ class LocalEngine:
         self.url=f'http://127.0.0.1:{self.port}/v1'
         opts=self.model.get('options',{})
         args=[str(exe),'-m',str(path),'--host','127.0.0.1','--port',str(self.port),'--api-key',self.key,
-              '-ngl','99','-c','8192','-np','1','-t','12','-ctk','f16','-ctv','f16','-fa','auto',
+              '-ngl','99',*self.capacity_args(),'-t','12','-ctk','f16','-ctv','f16','-fa','auto',
               '--no-webui','--jinja','--no-context-shift','--offline']
         if 'enable_thinking' in opts:args+=['--chat-template-kwargs',json.dumps(dict(enable_thinking=opts['enable_thinking']))]
-        self.log=(self.folder/'engine.log').open('w',encoding='utf-8');self.job=OwnedJob()
+        if self.registry.get('mtp') and self.registry.get('runtime_release')=='b11718' and self.model.get('sha256')=='f5f1dd8920d417aac2718b0bda3403da274301efdd6760b4f0f4b864ff2ad57d':
+            args+=['--spec-type','draft-mtp','--spec-draft-n-max','3']
+        self.log=(self.folder/('engine-'+self.model.get('key','local')+'.log')).open('a',encoding='utf-8');self.job=OwnedJob()
         self.process=subprocess.Popen(args,cwd=exe.parent,stdout=self.log,stderr=self.log,creationflags=subprocess.CREATE_NO_WINDOW)
         try:self.job.assign(self.process)
         except BaseException:self.process.terminate();self.close();raise
@@ -70,7 +78,7 @@ class LocalEngine:
             start=time.monotonic()
             while time.monotonic()-start<180:
                 if self.cancel():raise InterruptedError('취소됨')
-                if self.process.poll() is not None:raise RuntimeError('로컬 엔진 시작 실패: engine.log 확인')
+                if self.process.poll() is not None:raise RuntimeError('로컬 엔진 시작 실패: 작업 폴더의 engine-*.log 확인')
                 try:
                     if client.get(self.url.removesuffix('/v1')+'/health').status_code==200:return self
                 except httpx.HTTPError:pass

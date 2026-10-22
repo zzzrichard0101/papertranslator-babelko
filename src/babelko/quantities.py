@@ -1,10 +1,72 @@
 """Exact, narrow duration equivalence; never relax signs or unrelated numbers."""
 from fractions import Fraction
-import re
+from decimal import Decimal,localcontext
+import collections,re
 
 WORDS=dict(zero=0,one=1,two=2,three=3,four=4,five=5,six=6,seven=7,eight=8,nine=9,ten=10,
            eleven=11,twelve=12,thirteen=13,fourteen=14,fifteen=15,sixteen=16,seventeen=17,eighteen=18,nineteen=19,
            twenty=20,thirty=30,forty=40,fifty=50,sixty=60,seventy=70,eighty=80,ninety=90)
+
+
+def expand_scale_ranges(text):
+    """A shared quantity suffix applies to both endpoints: 1-5 million."""
+    number=r'[-+−]?\d+(?:\.\d+)?'
+    units=r'(?:thousand|million|billion|trillion|[KMB])\b|백만|천만|천|만|억|조'
+    return re.sub(r'(?<![\w.])('+number+r')\s*(?:[-–~]|\bto\b)\s*('+number+r')\s*('+units+r')',
+                  r'\1\3 to \2\3',text,flags=re.I)
+
+
+def equivalent_scales(source,target):
+    """Mask only exactly paired large quantities, e.g. 2 billion == 20억."""
+    source,target=expand_scale_ranges(source),expand_scale_ranges(target)
+    en=list(re.finditer(r'(?<![\w])([-+−]?\d+(?:\.\d+)?)\s*(thousand|million|billion|trillion)\b',source,re.I))
+    ko=list(re.finditer(r'(?<![\w])([-+−]?\d+(?:\.\d+)?)\s*(천|만|억|조)',target))
+    factors=dict(thousand=1000,million=1000000,billion=1000000000,trillion=1000000000000,천=1000,만=10000,억=100000000,조=1000000000000)
+    used=set();a=[];b=[]
+    for original in en:
+        amount=Fraction(original[1].replace('−','-'))*factors[original[2].lower()]
+        match=next((i for i,t in enumerate(ko) if i not in used and Fraction(t[1].replace('−','-'))*factors[t[2]]==amount),None)
+        if match is not None:used.add(match);a.append(original.span());b.append(ko[match].span())
+    def mask(text,spans):
+        chars=list(text)
+        for start,end in spans:chars[start:end]=' '*(end-start)
+        return ''.join(chars)
+    return mask(source,a),mask(target,b)
+
+
+def equivalent_scaled_numerals(source,target):
+    """Pair exact K/M/B, Korean large-unit and expanded decimal quantities."""
+    factors=dict(K=1000,M=1000000,B=1000000000,백만=1000000,천만=10000000,천=1000,만=10000,억=100000000,조=1000000000000)
+    numeric=r'[-+−]?\d+(?:[.,]\d+)*'
+    pattern=re.compile('('+numeric+r')\s*(K|M|B|백만|천만|천|만|억|조)?')
+    def canonical(text):
+        text=re.sub(r'(?<=[A-Za-z가-힣])[-–](?=\d+(?:\.\d+)?K(?:\b|iterations))',' ',text)
+        text=expand_scale_ranges(text)
+        def expanded(m):
+            with localcontext() as context:
+                context.prec=80
+                result=Decimal(m[1].replace('−','-').replace(',',''))*dict(thousand=1000,million=1000000,billion=1000000000,trillion=1000000000000)[m[2].lower()]
+                return ('+' if m[1].startswith('+') else '')+format(result.normalize(),'f')
+        return re.sub('('+numeric+r')\s*(thousand|million|billion|trillion)\b',expanded,text,flags=re.I)
+    source,target=canonical(source),canonical(target)
+    def items(text):
+        result=[]
+        for m in pattern.finditer(text):
+            try:amount=Fraction(m[1].replace('−','-').replace(',',''))*factors.get(m[2],1)
+            except (ValueError,ZeroDivisionError):continue
+            result.append((m,amount,bool(m[2])))
+        return result
+    originals,targets=items(source),items(target);used=set();a=[];b=[]
+    for original,amount,scaled in originals:
+        match=next((i for i,(t,v,s) in enumerate(targets) if i not in used and (scaled or s) and amount==v and original[1].startswith('+')==t[1].startswith('+')),None)
+        if match is not None:used.add(match);a.append(original.span());b.append(targets[match][0].span())
+    def mask(text,spans):
+        chars=list(text)
+        for start,end in spans:chars[start:end]=' '*(end-start)
+        return ''.join(chars)
+    unmatched_source=any(scaled and m.span() not in a for m,_,scaled in originals)
+    unmatched_target=any(scaled and i not in used for i,(_,_,scaled) in enumerate(targets))
+    return mask(source,a),mask(target,b),unmatched_source and unmatched_target
 KOREAN=dict(한=1,두=2,세=3,네=4,다섯=5,여섯=6,일곱=7,여덟=8,아홉=9,열=10,스무=20)
 WORD='(?:'+'|'.join(sorted(WORDS,key=len,reverse=True))+')'
 NUMBER=r'[-+−]?(?:\d+[- ]\d+/\d+|\d+½|\d+/\d+|\d+(?:\.\d+)?)'
@@ -29,6 +91,39 @@ def value(text):
     half=text.endswith(' and a half')
     if half:text=text[:-11]
     return Fraction(sum(WORDS[w] for w in re.split('[- ]',text)))+(Fraction(1,2) if half else 0)
+
+
+def _point_groups(text):
+    amount=r'(?:'+VALUE+r'|[-+−]?\d[\d,]*(?:\.\d+)?(?:[eE][-+]?\d+)?|(?:a|one)\s+half|half|반)'
+    unit=r'(?:percentage\s+points?|percent\s+points?|%\s*(?:points?|포인트|[pP](?![A-Za-z]))|퍼센트\s*포인트)'
+    pattern=re.compile(r'(?<![A-Za-z0-9_./])('+amount+r')\s*(?:(?:of\s+)?a\s+)?'+unit,re.I)
+    result=[]
+    for match in pattern.finditer(text):
+        try:
+            token=match[1].replace(',','').lower()
+            result.append((match,Fraction(1,2) if token in {'half','a half','one half','반'} else value(token)))
+        except (ValueError,KeyError,ZeroDivisionError):continue
+    return result
+
+
+def percentage_point_errors(source,target):
+    """Percent and percentage-point changes are distinct even with equal digits."""
+    return collections.Counter(v for _,v in _point_groups(source))!=collections.Counter(v for _,v in _point_groups(target))
+
+
+def equivalent_percentage_points(source,target):
+    """Pair exact word/fraction quantities without relaxing decimal precision."""
+    a,b=_point_groups(source),_point_groups(target);used=set();left=[];right=[]
+    for original,amount in a:
+        partner=next((i for i,(m,v) in enumerate(b) if i not in used and v==amount),None)
+        if partner is None:continue
+        used.add(partner);translated=b[partner][0]
+        if re.search(r'[A-DF-Za-df-z가-힣/½]',original[1]+translated[1]):left.append(original.span());right.append(translated.span())
+    def mask(text,spans):
+        chars=list(text)
+        for start,end in spans:chars[start:end]=' '*(end-start)
+        return ''.join(chars)
+    return mask(source,left),mask(target,right)
 
 
 def groups(text,pattern):

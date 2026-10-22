@@ -1,0 +1,21 @@
+[
+  {
+    "id": "unfinished-object",
+    "source": "Recent studies improved the distribution of",
+    "neighbors": ["the categorical outcomes across sites."],
+    "good": "최근 연구들은 분포를 개선했다.",
+    "bad": "최근 연구들은 정규분포를 개선했다."
+  },
+  {
+    "id": "continuation-fragment",
+    "source": "masked tokens, and the order in which they are predicted.",
+    "good": "마스킹된 토큰과 그 토큰을 예측하는 순서.",
+    "bad": "마스킹된 토큰과 그 토큰을 입력하는 순서."
+  },
+  {
+    "id": "conditional-fragment",
+    "source": "provided that the sensor remains dry",
+    "good": "센서가 건조한 상태를 유지한다는 조건으로",
+    "bad": "센서가 젖어 있더라도"
+  }
+]

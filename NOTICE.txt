@@ -5,5 +5,6 @@ PDFMathTranslate/PDFMathTranslate-next, copyright its contributors, AGPL-3.0.
 funstory-ai/BabelDOC, copyright its contributors, AGPL-3.0.
 Exact URLs and commits are recorded in upstream.lock.json; original LICENSE files remain in upstream checkouts. Source checkouts are obtained by scripts/setup.ps1.
 The quantity-equivalence helpers and Windows OwnedJob ownership primitive is adapted from PaperTranslator Windows, AGPL-3.0-only, commit 67ddd814c4d1474107c8bef053368b858cb2a8cc.
+Independent scan recovery uses RapidOCR (RapidAI, Apache-2.0) through rapidocr-onnxruntime 1.4.4 and its packaged PP-OCRv4 models (PaddleOCR contributors, Apache-2.0). Model SHA-256 values are checked in scan_evidence.py. The reader runs locally on CPU; no document upload or runtime model download is used.
 
 Models and fonts are not included in this source repository. Their upstream licenses and attributions apply separately. Dependency and asset notices must accompany a future binary distribution. This is a source-based development installation, not a bundled standalone EXE release.
