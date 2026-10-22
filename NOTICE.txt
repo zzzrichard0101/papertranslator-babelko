@@ -8,3 +8,12 @@ The quantity-equivalence helpers and Windows OwnedJob ownership primitive is ada
 Independent scan recovery uses RapidOCR (RapidAI, Apache-2.0) through rapidocr-onnxruntime 1.4.4 and its packaged PP-OCRv4 models (PaddleOCR contributors, Apache-2.0). Model SHA-256 values are checked in scan_evidence.py. The reader runs locally on CPU; no document upload or runtime model download is used.
 
 Models and fonts are not included in this source repository. Their upstream licenses and attributions apply separately. Dependency and asset notices must accompany a future binary distribution. This is a source-based development installation, not a bundled standalone EXE release.
+
+The optional installer downloads llama.cpp b11718 (MIT) and its Windows CUDA
+12.4 runtime binaries (NVIDIA terms) from the official release:
+https://github.com/ggml-org/llama.cpp/releases/tag/b11718
+It downloads Hy-MT2-30B-A3B-GGUF (Apache-2.0) from
+https://huggingface.co/tencent/Hy-MT2-30B-A3B-GGUF
+and Qwen3.8 27B (Apache-2.0) from
+https://ollama.com/library/qwen3.8:27b
+Pinned file sizes and SHA-256 values are in src/babelko/model_setup.py.

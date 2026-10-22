@@ -2,22 +2,48 @@
 
 PDFMathTranslate-next의 클라이언트·번역기 인터페이스와 BabelDOC의 문서 분석·배치·조판 엔진을 결합한 별도 Windows 실험판입니다. 기존 PaperTranslator 프로그램과 작업 기록은 그대로 유지합니다.
 
-로컬 Hy-MT2 30B-A3B 초벌과 Qwen 27B 문장별 양방향 대조·재교정을 결합합니다. 두 모델을 동시에 GPU에 올리지 않고 문서 초벌을 저장한 뒤 한 번 전환합니다. Qwen 단일 모델 비교 모드도 유지합니다. 설치된 모델·CUDA 런타임의 경로와 SHA256을 별도 설정에 가져와 공유하며 기존 설정은 변경하지 않습니다. API 키 없이 실행합니다.
+로컬 Hy-MT2 30B-A3B 초벌과 Qwen 27B 문장별 양방향 대조·재교정을 결합합니다. 두 모델을 동시에 GPU에 올리지 않고 문서 초벌을 저장한 뒤 한 번 전환합니다. Qwen 단일 모델 비교 모드도 유지합니다. API 키 없이 실행하며 PDF 내용은 모델 다운로드 서버로 보내지 않습니다.
 
-## 실행
+## 처음 설치하기 · Windows
 
-현재 개발 PC에는 별도 환경과 바탕화면 `BabelKO 한국어 PDF 번역기 (실험판)` 바로가기가 설치되어 있습니다. 소스 실행:
+Windows 10/11 x64, NVIDIA CUDA 12를 사용할 수 있는 그래픽 드라이버, [Git](https://git-scm.com/downloads/win), [uv](https://docs.astral.sh/uv/getting-started/installation/)가 필요합니다. **24GB VRAM GPU를 권장**합니다. 결합 모드의 모델 파일만 약 35GB이며, 실행 엔진·폰트·OCR·다운로드 여유 공간까지 고려해 Windows 사용자 드라이브에 **45GB 이상**을 확보하세요. CPU 전용 실행과 독립 실행 EXE는 현재 제공하지 않습니다. GPU가 작으면 아래의 Qwen 단일 모델 설치를 사용해도 실행 가능 여부와 속도는 환경에 따라 달라집니다.
+
+Git과 uv가 없다면 PowerShell에서 설치한 뒤 **PowerShell을 새로 열어** 아래 명령을 실행하세요.
 
 ```powershell
-uv run python -m babelko
+winget install --id Git.Git -e
+winget install --id astral-sh.uv -e
 ```
 
-새 환경에서는 먼저 `scripts/setup.ps1`로 고정된 두 상위 저장소·Python 의존성·폰트·배치 모델·영어 OCR을 준비해야 합니다. 초기 자산 준비에는 인터넷이 필요합니다. 기존 로컬 모델 저장소가 없는 PC의 모델 다운로드 UI는 아직 구현하지 않았습니다.
-
-명령줄:
+저장소, 고정된 상위 엔진, Python 3.12 환경, OCR·글꼴, 두 번역 모델과 CUDA 실행 엔진을 차례로 설치합니다. 별도로 Python이나 Ollama를 설치할 필요는 없습니다. 첫 설치에는 인터넷이 필요하고 모델 크기만큼 시간이 걸립니다.
 
 ```powershell
-uv run python scripts/translate.py input.pdf --output results --pages 1-5,9 --ocr auto --mode hybrid
+git clone https://github.com/zzzrichard0101/papertranslator-babelko.git
+cd papertranslator-babelko
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\launch.ps1
+```
+
+`install.ps1`은 바탕화면에 **BabelKO 한국어 PDF 번역기 (실험판)** 바로가기를 만듭니다. 이후에는 바로가기로 열면 됩니다. 앱에서 PDF를 고르고 **새 번역 시작**을 누르세요. 결과 폴더에 `Original.pdf`, `Korean.pdf`, `Bilingual.pdf`, `Quality.json`이 만들어집니다. `Bilingual.pdf`는 왼쪽 원문·오른쪽 한국어 대조본입니다. 긴 작업은 취소 후 **이 작업 다시 시작**으로 저장된 번역을 재사용할 수 있습니다.
+
+모델은 [Hy-MT2 30B GGUF](https://huggingface.co/tencent/Hy-MT2-30B-A3B-GGUF), [Qwen3.8 27B](https://ollama.com/library/qwen3.8:27b), 실행 엔진은 [llama.cpp b11718 Windows CUDA 12](https://github.com/ggml-org/llama.cpp/releases/tag/b11718)에서 받습니다. 설치기는 다운로드가 끊긴 위치부터 이어받고 파일 크기와 SHA-256을 확인한 뒤 `%LOCALAPPDATA%\PaperTranslatorBabelKO` 아래에 저장합니다. 모델 파일과 PDF는 Git 저장소에 포함되지 않습니다. 이전 PaperTranslator 설치에서 같은 파일이 이미 확인되면 해당 파일을 읽기 전용으로 재사용할 수 있습니다.
+
+**Qwen 단일 모델만 설치**하려면 첫 설치에서 다음 명령을 대신 실행하세요. 모델 다운로드는 약 16.8GB이며, 앱의 번역 방식에서 **Qwen 단일 모델**을 선택해야 합니다. 결합 모드가 필요해지면 나중에 기본 `setup.ps1`을 다시 실행하면 Hy 모델만 추가로 받습니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -ModelMode qwen
+```
+
+다운로드가 중단되면 같은 `setup.ps1` 명령을 다시 실행하세요. 설치 확인만 하려면 `.\.venv\Scripts\python.exe scripts\download_models.py --verify-only`를 실행합니다. Qwen만 설치했다면 뒤에 `--mode qwen`을 붙이세요. 설치 오류가 나면 PowerShell에 표시된 파일명과 메시지를 확인하세요. `로컬 엔진 시작 실패`는 작업 폴더의 `engine-*.log`에 상세 원인이 남습니다. 다른 `llama-server.exe`가 이미 실행 중이면 종료한 뒤 다시 시작해야 합니다.
+
+## 명령줄 실행
+
+GUI 없이 번역하려면 결과 폴더를 만든 후 실행합니다.
+
+```powershell
+New-Item -ItemType Directory -Force results | Out-Null
+.\.venv\Scripts\python.exe scripts\translate.py input.pdf --output results --pages 1-5,9 --ocr auto --mode hybrid
 ```
 
 결과 폴더는 미리 생성해야 합니다. 쪽 번호는 PDF의 물리 쪽이며 비우면 전체를 처리합니다.

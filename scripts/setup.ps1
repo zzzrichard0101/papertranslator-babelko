@@ -1,3 +1,7 @@
+param(
+    [ValidateSet('hybrid','qwen')][string]$ModelMode = 'hybrid',
+    [switch]$SkipModels
+)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 $lockData = Get-Content -LiteralPath (Join-Path $projectRoot 'upstream.lock.json') -Raw | ConvertFrom-Json
@@ -16,8 +20,12 @@ foreach ($upstreamName in @('PDFMathTranslate-next','BabelDOC')) {
 }
 Push-Location $projectRoot
 try {
-    uv sync --frozen --group dev
+    uv sync --frozen --no-dev
     if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
-    uv run python scripts/prepare_assets.py
+    & (Join-Path $projectRoot '.venv\Scripts\python.exe') scripts/prepare_assets.py
     if ($LASTEXITCODE -ne 0) { throw 'Asset preparation failed' }
+    if (-not $SkipModels) {
+        & (Join-Path $projectRoot '.venv\Scripts\python.exe') scripts/download_models.py --mode $ModelMode
+        if ($LASTEXITCODE -ne 0) { throw 'Local model installation failed' }
+    }
 } finally { Pop-Location }
