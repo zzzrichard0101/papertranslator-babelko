@@ -108,12 +108,51 @@ def caption_word_repairs(docs):
     return repairs
 
 
+def cross_boundary_word_repairs(docs):
+    """Move a split word to the following text unit before model inference.
+
+    The source glyphs and page geometry remain untouched. This only changes
+    the two model inputs, so neither model sees an invented half-word such as
+    ``mary`` from ``In sum-`` / ``mary`` at a column boundary.
+    """
+    repairs={};candidates=[]
+    for page in docs.page:
+        for paragraph in getattr(page,'pdf_paragraph',[]):
+            if paragraph.layout_label in {'plain text','text','paragraph_hybrid'} and paragraph.unicode:
+                candidates.append((page.page_number,paragraph))
+    for (left_page,left),(right_page,right) in zip(candidates,candidates[1:]):
+        if right_page-left_page not in {0,1}:continue
+        # OCR/PDF extraction can glue preceding words to the split word
+        # ("domainsviacoordinatetransfor-" / "mations"). Moving the
+        # complete tail is safer than asking the model to invent a meaning
+        # for an isolated suffix.
+        a=re.search(r'([A-Za-z]{2,40})-\s*$',left.unicode)
+        b=re.match(r'\s*([a-z]{2,10})\b',right.unicode)
+        if not a or not b:continue
+        joined=a[1]+b[1]
+        if len(joined)>48:continue
+        before=left.unicode[:a.start()]
+        lead=re.search(r'(?i)\b(By|In|For|To|With|Without|After|Before|While|Although)\s+$',before)
+        prefix=before[lead.start():] if lead else ''
+        tail=prefix+a[0].rstrip()
+        replacement=prefix+joined
+        repairs.setdefault(left.debug_id,{})['cross_end']=tail
+        repairs.setdefault(right.debug_id,{})['cross_start']=(b[1],replacement)
+    return repairs
+
+
 def repair_caption_input(value,repair):
     if value is None:return value
     if 'end' in repair:
         old,new=repair['end'];value.unicode=re.sub(re.escape(old)+r'(?=(?:</style>)*\s*$)',new,value.unicode)
     if 'start' in repair:
         old,new=repair['start'];value.unicode=re.sub(r'^(\s*(?:<style\s+id=[\'\"]\d+[\'\"]>)*)'+re.escape(old),lambda m:m[1]+new,value.unicode)
+    if 'cross_end' in repair:
+        tail=repair['cross_end']
+        value.unicode=re.sub(re.escape(tail)+r'(?=(?:</style>)*\s*$)','',value.unicode)
+    if 'cross_start' in repair:
+        old,new=repair['cross_start']
+        value.unicode=re.sub(r'^(\s*(?:<style\s+id=[\'\"]\d+[\'\"]>)*)'+re.escape(old),lambda m:m[1]+new,value.unicode)
     return value
 
 

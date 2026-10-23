@@ -15,6 +15,20 @@ def test_segments_cover_tails_long_sentences_conditions_and_formulas():
     assert parts[0].startswith('Dr. Smith')
 
 
+def test_contents_leader_dots_are_not_hundreds_of_audit_units():
+    text='B.1 Gradient Decomposition '+('. '*175)+'34'
+    parts=segments(text)
+    assert len(parts)<=3
+    assert ''.join(''.join(parts).split())==''.join(view(text).split())
+
+
+def test_many_tiny_pdf_fragments_retain_all_content_with_bounded_ids():
+    text='A. '*120
+    parts=segments(text)
+    assert len(parts)<10
+    assert ''.join(''.join(parts).split())==''.join(view(text).split())
+
+
 def test_audit_cannot_pass_an_omitted_clause_with_no_literal_evidence():
     batch=tasks('Use the device only if dry.','장치를 사용한다.')[:1]
     with pytest.raises(ValueError):validate(batch,[dict(id='s0',verdict='faithful',evidence=[],reason='')],batch[0]['text'],'장치를 사용한다.')
@@ -81,6 +95,23 @@ def test_adaptive_batch_reduces_calls_and_falls_back_without_dropping_checks():
         return json.dumps([dict(id=x['id'],verdict='faithful',evidence=[v['id'] for v in data['UNITS'] if v['side']!=x['side']],reason='') for x in data['UNITS'] if x['id'] in data['CHECK_IDS']])
     result=audit(r,request);r['assurance']=result
     assert calls==[16,6,6,4] and len(result['checks'])==16 and accepted(r)
+
+
+def test_context_overflow_retries_compact_then_splits_without_skipping_checks():
+    r=dict(source='First claim. Second claim.',final='첫 주장. 둘째 주장.',context='optional title',neighbors=['optional neighbor'])
+    calls=[]
+    def request(messages,response_schema):
+        data=json.loads(messages[1]['content']);context=data.get('CONTEXT') if 'CONTEXT' in data else data['DOCUMENTS'][0]['CONTEXT']
+        calls.append((len(data['CHECK_IDS']),context,response_schema['items']['type']))
+        if context or len(data['CHECK_IDS'])>1:
+            raise RuntimeError('request (8404 tokens) exceeds the available context size (8192 tokens)')
+        return reply([dict(id=item['id'],verdict='faithful',
+            evidence=[other['id'] for other in data['UNITS'] if other['side']!=item['side']],reason='')
+            for item in data['UNITS'] if item['id'] in data['CHECK_IDS']],response_schema)
+    result=audit(r,request);r['assurance']=result
+    assert calls[0]==(4,'optional title','array')
+    assert any(count==1 and not context for count,context,_ in calls)
+    assert len(result['checks'])==4 and accepted(r)
 
 
 def test_known_defect_evidence_is_current_but_never_accepted():

@@ -2,7 +2,7 @@ from pathlib import Path
 import pymupdf as fitz
 from babelko.ocr import prepare
 from babelko.pipeline import compose
-from babelko.pdf_preservation import optimize
+from babelko.pdf_preservation import optimize,restore_original_index
 
 
 def document(path):
@@ -48,3 +48,21 @@ def test_composition_preserves_rotated_source_view_and_original_file(tmp_path):
         assert report['pages'][0]['restore_rotation']==90
         b[0].set_rotation(report['pages'][0]['restore_rotation'])
         assert b[0].get_pixmap(alpha=False).samples==a[0].get_pixmap(alpha=False).samples
+
+
+def test_untranslated_index_uses_exact_original_page_pixels(tmp_path):
+    original=tmp_path/'original.pdf';korean=tmp_path/'korean.pdf'
+    for path,prefix in [(original,'Original'),(korean,'Korean')]:
+        with fitz.open() as doc:
+            for n in range(3):
+                page=doc.new_page();page.insert_text((30,70),f'{prefix} page {n+1}')
+            doc.save(path)
+    before=original.read_bytes()
+    report=dict(paragraphs=[dict(source_page=3,reason='index_section')])
+    assert restore_original_index(original,korean,[0,1,2],report)==[3]
+    assert original.read_bytes()==before
+    with fitz.open(original) as source,fitz.open(korean) as translated:
+        assert len(translated)==3
+        assert 'Korean page 2' in translated[1].get_text()
+        assert 'Original page 3' in translated[2].get_text()
+        assert translated[2].get_pixmap().samples==source[2].get_pixmap().samples

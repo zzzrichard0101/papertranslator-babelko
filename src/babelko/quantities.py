@@ -189,7 +189,9 @@ def equivalent_fractions(source,target):
         try:amount=number(match['num'])/number(match['den'])*(-1 if match['sign'] else 1)
         except ZeroDivisionError:continue
         targets.append((match.start(),match.end(),amount))
-    for match in re.finditer(r'(?<![\w/:.])([-+−]?\d+)\s*/\s*(\d+)(?![\w/]|\s*%)',target):
+    # Korean counters/particles directly after a fraction ("1/4만") are valid.
+    # Only ASCII identifier continuations make the fraction part of a token.
+    for match in re.finditer(r'(?<![A-Za-z0-9_/:.])([-+−]?\d+)\s*/\s*(\d+)(?![A-Za-z0-9_/]|\s*%)',target):
         if int(match[2]):targets.append((match.start(),match.end(),Fraction(match[1].replace('−','-'))/int(match[2])))
     for match in re.finditer(r'(?<![A-Za-z0-9_./])[-+−]?\d+(?:\.\d+)?\s*%',target):
         targets.append((match.start(),match.end(),Fraction(match[0][:-1].strip().replace('−','-'))/100))

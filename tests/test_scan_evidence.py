@@ -1,8 +1,64 @@
 import copy
 from types import SimpleNamespace as NS
 import pytest
-from babelko.scan_evidence import corrections,apply,rule_only,raster_single_glyph
+from babelko.scan_evidence import corrections,apply,rule_only,raster_single_glyph,duplicate_title,running_scan_headers
 from babelko.translator import number_errors
+
+
+def test_named_research_levels_and_world_war_ordinal_are_not_invented_numbers():
+    assert not number_errors('A primary source and a secondary source.', '1차 자료와 2차 자료.')
+    assert not number_errors('Six people were interned during WWII.', '제2차 세계대전 중 6명이 수용되었다.')
+    assert number_errors('A primary source.', '1차 자료와 7건의 사례.')
+
+
+def test_repeated_decade_resolves_source_reference_without_hiding_other_dates():
+    source='1980s: The journal started in 1983. At the end of the decade, research grew.'
+    target='1980년대: 학술지는 1983년에 창간되었다. 1980년대 말 연구가 늘었다.'
+    assert not number_errors(source,target)
+    assert number_errors(source,target.replace('1983','1984'))
+
+
+def test_weekly_session_can_explicitly_be_once_per_week():
+    source='One hour per weekly session over 12 weeks.'
+    assert not number_errors(source,'12주 동안 주 1회, 매회 1시간씩 진행한다.')
+    assert number_errors(source,'12주 동안 주 3회, 매회 1시간씩 진행한다.')
+
+
+def test_polynomial_degree_terms_license_only_corresponding_korean_ordinals():
+    assert not number_errors('A quadratic and a cubic system.','2차 및 3차 반응계.')
+    assert not number_errors('A second-order quadratic system.','2차 2차 반응계.')
+    assert number_errors('A quadratic system.','2차 반응계와 3개의 해.')
+    assert number_errors('A quadratic system.','3차 반응계.')
+
+
+def test_overlapping_short_scan_title_does_not_repeat_full_heading():
+    from types import SimpleNamespace as Obj
+    full=Obj(unicode='NON-EXPERIMENTAL DESCRIPTIVE RESEARCH',layout_label='title',
+        box=Obj(x=87,y=350,x2=522,y2=380))
+    fragment=Obj(unicode='DESCRIPTIVE RESE RCH',layout_label='title',
+        box=Obj(x=285,y=355,x2=505,y2=373))
+    assert duplicate_title(fragment,[full,fragment])
+    assert not duplicate_title(full,[full,fragment])
+    fragment.box=Obj(x=285,y=400,x2=505,y2=420)
+    assert not duplicate_title(fragment,[full,fragment])
+
+
+def test_numbered_scan_running_header_stays_in_original_raster():
+    box=lambda y,y2:NS(x=80,y=y,x2=530,y2=y2)
+    header=NS(unicode='112 WIRSuCion io AYTORRPY RESIN, cece sss',layout_label='title',box=box(777,820))
+    overlap=NS(unicode='Introduction to 112 Research',layout_label='title',box=box(788,815))
+    chapter=NS(unicode='A SEARCH FOR HOME',layout_label='title',box=box(295,345))
+    unrelated=NS(unicode='113 independent experiments',layout_label='title',box=box(650,675))
+    assert running_scan_headers([header,overlap,chapter,unrelated],842)=={id(header),id(overlap)}
+
+
+def test_two_pixel_reads_can_restore_shuffled_title_without_adding_letters():
+    from babelko.recovery import reordered_title
+    source='REVIEW BOARD THEINSTITUTIONAL RESEARCH AND THE DEFINITION OF'
+    image='THE INSTITUTIONAL REVIEW BOARD AND THE DEFINITION OF RESEARCH'
+    assert reordered_title(source,image,image)==image
+    assert reordered_title(source,image,image+' METHODS') is None
+    assert reordered_title(source,image+' METHODS',image+' METHODS') is None
 
 
 @pytest.mark.parametrize('source,target',[

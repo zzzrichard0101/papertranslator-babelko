@@ -1,6 +1,7 @@
 from types import SimpleNamespace as NS
 import pymupdf as fitz
-from babelko.region_ledger import RegionLedger
+from babelko.region_ledger import RegionLedger,pixels_preserved
+from babelko.storage import save
 
 
 def row(identity,page,x,y,text='12'):
@@ -64,6 +65,25 @@ def test_preserved_chart_label_is_checked_for_glyphs_without_model_submission(tm
     assert fixture(tmp_path,[r],omit='axis')['status']=='failed'
 
 
+def test_exactly_preserved_fallback_pixels_resolve_unreliable_font_coordinates(tmp_path):
+    source=tmp_path/'source.pdf';output=tmp_path/'output.pdf'
+    with fitz.open() as pdf:
+        page=pdf.new_page(width=600,height=800)
+        page.insert_text((50,100),'Axis',fontsize=12)
+        pdf.save(source)
+    output.write_bytes(source.read_bytes())
+    r=row('axis',1,45,690,'Axis')
+    r.update(source_box=[45,680,100,710],role='fallback_line',inputs=[],target=None,record_keys=[])
+    # Some embedded-font IL glyph boxes are unrelated to PDF text boxes.
+    for glyph in r['glyphs']:glyph['box']=[300,680,310,690]
+    ledger=RegionLedger(tmp_path);ledger.rows=[r]
+    assert ledger.inspect(output,[0],source)['status']=='passed'
+    with fitz.open() as pdf:
+        pdf.new_page(width=600,height=800)
+        pdf.save(output,incremental=False)
+    assert ledger.inspect(output,[0],source)['status']=='failed'
+
+
 def test_new_punctuation_drawing_fragment_is_not_unmapped_translation(tmp_path):
     ledger=RegionLedger(tmp_path);ledger.collecting=True
     ledger.pre(NS(debug_id='new',unicode='—'),'.')
@@ -91,3 +111,22 @@ def test_batch_worker_and_paragraph_worker_bind_by_source_and_returned_target(tm
     ledger.post(p,'다른 내용이다.')
     # A second post cannot keep a stale link from a different target.
     assert ledger.rows[0]['record_keys']==[]
+
+
+def test_cached_repeated_cell_links_only_exact_complete_target(tmp_path):
+    folder=tmp_path/'job';(folder/'hybrid').mkdir(parents=True)
+    save(folder/'unit-order.json',dict(active_keys=['short','exact','other']))
+    for key,target in [('short','우리의'),('exact','우리의 방법'),('other','저희 방법')]:
+        save(folder/'hybrid'/(key+'.json'),dict(key=key,source='Ours',final=target))
+    ledger=RegionLedger(folder)
+    item=dict(inputs=['Ours'],target='우리의 방법',record_keys=[])
+    ledger.relink_saved_row(item)
+    assert item['record_keys']==['exact']
+
+
+def test_preserved_pixel_tolerance_accepts_edge_noise_but_rejects_lost_ink():
+    original=bytes([0]*700+[255]*9300)
+    noisy=bytes([0]*696+[255]*4+[255]*9271+[180]*29)
+    assert pixels_preserved(NS(width=100,height=100,samples=original),NS(width=100,height=100,samples=noisy))
+    missing=bytes([255]*60+[0]*640+[255]*9300)
+    assert not pixels_preserved(NS(width=100,height=100,samples=original),NS(width=100,height=100,samples=missing))

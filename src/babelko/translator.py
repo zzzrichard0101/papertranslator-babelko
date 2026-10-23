@@ -65,6 +65,36 @@ def number_errors(source,target):
         # are legitimate calendar boundaries; letters are not.
         pattern=r'(?<![A-Za-z])'+word+r'(?![A-Za-z])' if word.lower() in CALENDAR else r'\b'+word+r'\b'
         extra[n]=max(0,extra[n]-len(re.findall(pattern,word_source,re.I)))
+    # Scanned PDFs can glue a preceding word to a written quantity. These
+    # exact lexical forms still license the same Korean Arabic numeral.
+    extra['0']=max(0,extra['0']-len(re.findall(r'(?<![A-Za-z])nonzero\b',word_source,re.I)))
+    for word in ('one','two','three','four','five','six','seven','eight','nine'):
+        glued=len(re.findall(r'(?<=[A-Za-z])'+word+r'[- ]dimensional\b',word_source,re.I))
+        extra[WORDS[word]]=max(0,extra[WORDS[word]]-glued)
+    # These named categories are conventionally expressed with Korean ordinal
+    # digits. Permit only the matching counters, not an unrelated bare number.
+    for English,ordinal in (('primary','1'),('secondary','2')):
+        count=len(re.findall(r'\b'+English+r'\b',source,re.I))
+        if count:
+            used=min(count,len(re.findall(r'(?<!\d)'+ordinal+r'\s*차',target)))
+            extra[ordinal]=max(0,extra[ordinal]-used)
+    # Mathematical degree names have exact Korean numeral renderings. License
+    # only the matching "2차"/"3차" occurrences, never an unrelated bare digit.
+    for digit,terms in (('2',('quadratic','second-order')),('3',('cubic','third-order'))):
+        count=sum(len(re.findall(r'\b'+term+r'\b',source,re.I)) for term in terms)
+        used=min(count,len(re.findall(r'(?<!\d)'+digit+r'\s*차(?!원)',target)))
+        extra[digit]=max(0,extra[digit]-used)
+    if re.search(r'\b(?:WWII|World\s+War\s+II)\b',source,re.I):
+        used=len(re.findall(r'(?:제\s*)?2\s*차\s*세계\s*대전',target))
+        extra['2']=max(0,extra['2']-used)
+    if re.search(r'\bweekly\b',source,re.I) and re.search(r'주\s*1\s*회',target):
+        extra['1']=max(0,extra['1']-1)
+    # Korean normally repeats an explicit decade when English later says
+    # "the decade". This is a resolved reference, not an invented date.
+    if re.search(r'\b(?:at\s+)?(?:the\s+)?end\s+of\s+the\s+decade\b',source,re.I):
+        for decade in set(re.findall(r'\b((?:18|19|20)\d0)s\b',source)):
+            if len(re.findall(r'(?<!\d)'+decade+r'\s*년대',target))>=2:
+                extra[decade]=max(0,extra[decade]-1)
     # Explicit reciprocal wording may add the numerator in Korean fraction notation.
     if re.search(r'\b(?:four|4) times smaller\b',source,re.I) and re.search(r'4\s*분의\s*1',target):extra['1']=max(0,extra['1']-1)
     return bool(missing or +extra)

@@ -3,7 +3,7 @@
 The second reader runs on original pixels, not on a translation. Its results
 are content-addressed and retained, so resuming never repeats a finished page.
 """
-import copy,hashlib,re,statistics
+import copy,difflib,hashlib,re,statistics
 from pathlib import Path
 import pymupdf as fitz
 from .storage import digest,read,save
@@ -16,8 +16,8 @@ MODEL_HASHES={
     'ch_ppocr_mobile_v2.0_cls_infer.onnx':'e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c',
 }
 STYLE=re.compile(r"<style\s+id=['\"]\d+['\"]>|</style>")
-SUSPECT=re.compile(r'(?<![A-Za-z0-9])(?:1am|1f|10|0|1)(?![A-Za-z0-9])',re.I)
-ALTERNATIVES={'1am':['I am'],'1f':['If'],'10':['to'],'0':['to'],'1':['I']}
+SUSPECT=re.compile(r'(?<![A-Za-z0-9])(?:1am|1f|1s|10|0|1)(?![A-Za-z0-9])',re.I)
+ALTERNATIVES={'1am':['I am'],'1f':['If'],'1s':['is'],'10':['to'],'0':['to'],'1':['I']}
 
 
 def canonical(text):return re.sub(r'[^a-z0-9]','',text.lower())
@@ -34,6 +34,29 @@ def ordered_rows(rows):
             line=min(candidates,key=lambda line:abs(center-line[0]));line[2].append(row)
         else:lines.append([center,height,[row]])
     return [r for line in lines for r in sorted(line[2],key=lambda r:r['bbox'][0])]
+
+
+def running_scan_headers(paragraphs,page_height):
+    """Keep numbered book headers in the original raster, not translation IL.
+
+    A scan can produce two overlapping, contradictory OCR interpretations of
+    the same printed header. A leading page number in the upper margin anchors
+    the header; only co-located title fragments with that same number join it.
+    """
+    top=[p for p in paragraphs if getattr(p,'box',None) is not None and
+         getattr(p,'layout_label','')=='title' and p.box.y>page_height-110]
+    anchors=[]
+    for p in top:
+        match=re.match(r'^\s*(\d{1,3})\s+[A-Za-z]',getattr(p,'unicode','') or '')
+        if match:anchors.append((p,match[1]))
+    chosen={id(p) for p,_ in anchors}
+    for paragraph in top:
+        if id(paragraph) in chosen:continue
+        value=getattr(paragraph,'unicode','') or ''
+        for anchor,number in anchors:
+            if re.search(r'(?<!\d)'+re.escape(number)+r'(?!\d)',value) and min(paragraph.box.y2,anchor.box.y2)>=max(paragraph.box.y,anchor.box.y)-5:
+                chosen.add(id(paragraph));break
+    return chosen
 
 
 def corrections(source,rows):
@@ -426,6 +449,25 @@ def raster_single_glyph(page,box,source,known_rows=()):
     return False
 
 
+def duplicate_title(paragraph,peers):
+    """Discard only a shorter OCR layer covering the same printed title."""
+    if getattr(paragraph,'layout_label','')!='title' or not paragraph.box:return False
+    short=canonical(STYLE.sub('',paragraph.unicode or ''))
+    if len(short)<12:return False
+    a=paragraph.box;area=(a.x2-a.x)*(a.y2-a.y)
+    if area<=0:return False
+    for peer in peers:
+        if peer is paragraph or getattr(peer,'layout_label','')!='title' or not peer.box:continue
+        long=canonical(STYLE.sub('',peer.unicode or ''))
+        if len(long)<len(short)+5:continue
+        similar=short in long or any(difflib.SequenceMatcher(None,short,long[i:i+len(short)]).ratio()>=.9
+            for i in range(len(long)-len(short)+1))
+        if not similar:continue
+        b=peer.box;overlap=max(0,min(a.x2,b.x2)-max(a.x,b.x))*max(0,min(a.y2,b.y2)-max(a.y,b.y))
+        if overlap/area>=.75:return True
+    return False
+
+
 def cached(folder):
     """Read only verified cache entries, without starting a second reader."""
     state=read(folder/'state.json');result={}
@@ -445,8 +487,13 @@ def plan(docs,folder,rows,report_folder=None):
             index=page.page_number
             if index not in rows:continue
             src=original[index];kept=[]
+            headers=running_scan_headers(page.pdf_paragraph,src.rect.height)
             for p in page.pdf_paragraph:
                 if not p.box:kept.append(p);continue
+                if id(p) in headers:
+                    report.append(dict(page=index+1,id=p.debug_id,action='preserve_raster_running_header',source=p.unicode));continue
+                if duplicate_title(p,page.pdf_paragraph):
+                    report.append(dict(page=index+1,id=p.debug_id,action='exclude_duplicate_scan_title',source=p.unicode));continue
                 found=matching_rows(p.box,src.rect.height,rows[index])
                 # Never discard equations, image labels or body text on a weak
                 # OCR confidence score. Only isolated physical rules qualify.

@@ -3,13 +3,41 @@
 Cache OCR observations separately. Formula-rich native PDFs never enter this
 path. A source change invalidates its translation key and semantic evidence.
 """
-import difflib,hashlib,json,re,threading
+import collections,difflib,hashlib,json,re,threading
 from pathlib import Path
 import pymupdf as fitz
 from .storage import read,save,digest
-from .scan_evidence import canonical,corrections,ordered_rows,SUSPECT
+from .scan_evidence import canonical,corrections,ordered_rows,SUSPECT,ALTERNATIVES,STYLE
 
 REVISION='failed-scan-source-2'
+
+
+def reordered_title(source,first,second):
+    """Trust two pixel reads to order an OCR-shuffled title, not invent words."""
+    first=' '.join(first.split());second=' '.join(second.split())
+    if canonical(first)!=canonical(second) or not first or first==source:return None
+    # The same printed letters must be present on both sides. A crop that
+    # includes another heading, or loses a word, cannot replace the source.
+    if collections.Counter(canonical(source))!=collections.Counter(canonical(first)):
+        return None
+    return first
+
+
+def anchored_confusions(source,rows):
+    """Find a local OCR alternative when page-wide row order is unreliable."""
+    evidence=canonical(' '.join(r['text'] for r in ordered_rows(rows) if r['score']>=.9))
+    visible=STYLE.sub(lambda match:' '*len(match[0]),source)
+    found=[]
+    for match in SUSPECT.finditer(visible):
+        left=re.findall(r'[A-Za-z]{3,}',visible[:match.start()])
+        right=re.findall(r'[A-Za-z]{2,}',visible[match.end():])
+        if not left or not right:continue
+        before=canonical(left[-1]);after=canonical(right[0])[:4]
+        if len(before)<3 or len(after)<2:continue
+        for alternative in ALTERNATIVES[match[0].lower()]:
+            if evidence.count(before+canonical(alternative)+after)==1:
+                found.append(dict(start=match.start(),end=match.end(),before=match[0],after=alternative))
+    return found
 
 
 def bound_to_source(candidate,original):
@@ -91,9 +119,33 @@ def consensus(first,second,evidence,source=''):
     return text if replacements else None
 
 
+def duplicated_scan_crop(candidate,source):
+    """Accept a whole crop when its printed letters are an in-order subsequence.
+
+    Synthetic OCR sometimes overlays a second copy of each glyph. The image
+    reading is then shorter than the corrupted text, while every clean glyph
+    still occurs in order. Require both paragraph edges and near-total source
+    coverage so a crop missing a clause cannot replace the source.
+    """
+    from .scan_evidence import canonical
+    clean=canonical(candidate);overlaid=canonical(source)
+    if len(clean)<20 or not .35<=len(clean)/max(1,len(overlaid))<=1.05:return None
+    positions=[];cursor=0
+    for char in clean:
+        index=overlaid.find(char,cursor)
+        if index<0:return None
+        positions.append(index);cursor=index+1
+    if positions[0]>max(3,len(overlaid)*.05) or positions[-1]<len(overlaid)*.9:return None
+    if max((right-left-1 for left,right in zip(positions,positions[1:])),default=0)>max(8,len(overlaid)*.03):return None
+    return candidate.strip()
+
+
 class ScanRecovery:
     def __init__(self,folder,failed):
-        self.folder=Path(folder);self.failed=set(failed);self.lock=threading.RLock();self.validated=False
+        self.folder=Path(folder)
+        self.drafts={r['source']:r.get('draft','') for r in failed if isinstance(r,dict)}
+        self.failed={r['source'] if isinstance(r,dict) else r for r in failed}
+        self.lock=threading.RLock();self.validated=False
         self.state=read(self.folder/'state.json');self.cache=self.folder/'source-recovery';self.cache.mkdir(exist_ok=True)
 
     def tesseract(self,page,rect,dpi):
@@ -140,15 +192,45 @@ class ScanRecovery:
         if source not in self.failed:return value,[]
         from babeldoc.format.pdf.document_il.midend.il_translator import FormulaPlaceholder
         formulas=[p for p in value.placeholders if isinstance(p,FormulaPlaceholder)]
-        if not SUSPECT.search(source) and len(formulas)<5:return value,[]
+        title=getattr(paragraph,'layout_label','')=='title' and not value.placeholders
+        if not title and not SUSPECT.search(source) and len(formulas)<5:return value,[]
         with self.lock:observation=self.observe(item)
         changes=[]
+        if title:
+            first=' '.join(r['text'] for r in observation['rows'])
+            second=' '.join(r['text'] for r in observation['second_rows'])
+            fixed=reordered_title(source,first,second)
+            if fixed:
+                value.unicode=fixed
+                changes.append(dict(action='pixel_confirmed_title_order',reader_dpis=[300,400]))
+                source=fixed
         # Two-sided anchors remain mandatory. Do not weaken numeric validation
         # because a language model finds the source's "10" ungrammatical.
         fixed,edits=corrections(source,observation['rows'])
         second,second_edits=corrections(source,observation['second_rows'])
-        if fixed==second and edits:
-            value.unicode=fixed;changes.extend(dict(action='pixel_confirmed_ocr_confusion',**e) for e in edits)
+        key=lambda edit:(edit['start'],edit['end'],edit['after'])
+        shared={key(edit):edit for edit in edits if key(edit) in {key(other) for other in second_edits}}
+        selected={identity:dict(action='pixel_confirmed_ocr_confusion',**edit) for identity,edit in shared.items()}
+        # If the two Tesseract scales disagree about another token, a local
+        # pixel reading plus the independently saved Korean draft can resolve
+        # that token. The draft alone never changes source.
+        draft=getattr(self,'drafts',{}).get(source,'')
+        if re.search(r'[가-힣]',draft):
+            visible_draft=STYLE.sub(' ',re.sub(r'\{v\d+\}',' ',draft))
+            observations=[observation['rows'],observation['second_rows'],
+                item.get('support_rows',item.get('rows',[]))]
+            witnessed={}
+            for rows in observations:
+                for edit in corrections(source,rows)[1]+anchored_confusions(source,rows):
+                    witnessed[key(edit)]=edit
+            for identity,edit in witnessed.items():
+                if identity in selected:continue
+                if re.search(r'(?<!\d)'+re.escape(edit['before'])+r'(?!\d)',visible_draft):continue
+                selected[identity]=dict(action='pixel_and_draft_confirmed_ocr_confusion',**edit)
+        for edit in sorted(selected.values(),key=lambda e:e['start'],reverse=True):
+            value.unicode=value.unicode[:edit['start']]+edit['after']+value.unicode[edit['end']:]
+            changes.append(edit)
+        source=value.unicode
         embedded=sum(bool(re.search(r'[A-Za-z]'+re.escape(p.placeholder)+r'|'+re.escape(p.placeholder)+r'[A-Za-z]',source)) for p in formulas)
         fragmented=len(formulas)>=5 and embedded>=4 and all(not re.search(r'[=+*/∑∫√α-ω]', ''.join(c.char_unicode or '' for c in p.formula.pdf_character)) for p in formulas)
         if fragmented:
@@ -157,11 +239,18 @@ class ScanRecovery:
             expanded=source
             for placeholder in formulas:expanded=expanded.replace(placeholder.placeholder,''.join(c.char_unicode or '' for c in placeholder.formula.pdf_character))
             candidate=consensus(first,second,independent,expanded)
+            # Different DPI can disagree on a few glyphs. If their overall
+            # letter streams still agree strongly, retain the 300-DPI reading;
+            # the independent scan and original glyphs must support it below.
+            if candidate is None and difflib.SequenceMatcher(None,canonical(first),canonical(second),autojunk=False).ratio()>=.9:
+                candidate=first
             # Independent image OCR must also support the words. Sparse scan
             # evidence can cover only the corrupted band, so compare the
             # first line at its own coordinates, then retain the rest unchanged.
             if candidate is not None and len(canonical(candidate))>=8:
-                candidate=bound_to_source(candidate,expanded)
+                candidate=bound_to_source(candidate,expanded) or (
+                    duplicated_scan_crop(candidate,expanded)
+                    if canonical(first)==canonical(second) else None)
             if candidate is not None and len(canonical(candidate))>=8:
                 words=re.findall(r'[A-Za-z]{2,}|\d+',candidate)
                 evidence=canonical(independent)

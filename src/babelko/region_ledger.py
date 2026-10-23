@@ -12,12 +12,31 @@ import pymupdf as fitz
 from .storage import read,save
 from .render_coverage import TOKENS,canonical
 
-REVISION='spatial-occurrences-1'
+REVISION='spatial-occurrences-2'
 
 
 def box(value):
     if value is None:return None
     return [round(float(getattr(value,k)),4) for k in ('x','y','x2','y2')]
+
+
+def pixels_preserved(original,rendered):
+    if original.width!=rendered.width or original.height!=rendered.height:return False
+    if original.samples==rendered.samples:return True
+    # A saved PDF can rerasterize a few antialiased edge pixels while leaving
+    # a preserved rotated label intact. Never apply this allowance to a tiny
+    # mark where losing one glyph could fit the tolerance.
+    pairs=zip(original.samples,rendered.samples)
+    source_dark=sum(value<160 for value in original.samples)
+    if source_dark<200:return False
+    changed=lost=added=0
+    for before,after in pairs:
+        changed+=before!=after
+        lost+=before<160<=after
+        added+=after<160<=before
+    return (changed<=max(12,int(len(original.samples)*.005))
+        and lost<=max(2,int(source_dark*.01))
+        and added<=max(2,int(source_dark*.02)))
 
 
 def characters(value,seen=None):
@@ -40,11 +59,15 @@ class RegionLedger:
         self.folder=folder;self.rows=[];self.by_object={};self.collecting=False
         self.source_sha256=read(folder/'state.json').get('source_sha256') if (folder/'state.json').is_file() else None
         self.lock=threading.RLock();self.unknown=[];self.records={};self.source_records=collections.defaultdict(dict)
+        self.saved_records=None
 
     def begin(self,docs):
         from .references import select
+        from .figure_legends import select as select_figures
         references={id(p) for _,p,_ in select(docs)}
+        figures,_=select_figures(docs)
         self.rows=[];self.by_object={};self.unknown=[];self.records={};self.source_records=collections.defaultdict(dict)
+        self.saved_records=None
         occurrences=collections.Counter()
         for page in docs.page:
             for paragraph in page.pdf_paragraph:
@@ -56,7 +79,8 @@ class RegionLedger:
                 ordinal=occurrences[identity];occurrences[identity]+=1
                 row=dict(id=identity+'-'+str(ordinal),source_page=page.page_number+1,
                     source_box=position,role=paragraph.layout_label,source=text,inputs=[],record_keys=[],target=None,
-                    policy='preserved_reference' if id(paragraph) in references else 'translate',debug_id=paragraph.debug_id)
+                    policy=('preserved_reference' if id(paragraph) in references else
+                        'preserved_figure' if id(paragraph) in figures else 'translate'),debug_id=paragraph.debug_id)
                 self.rows.append(row);self.by_object[id(paragraph)]=row
         self.collecting=True
 
@@ -78,6 +102,33 @@ class RegionLedger:
             self.records[record['key']]=record
             self.source_records[record['source'].strip()][record['key']]=record
 
+    def saved_candidates(self,source):
+        # Upstream may answer a repeated cell from its native cache without
+        # calling our unit callback. Bind it to an exact active checkpoint.
+        if self.saved_records is None:
+            self.saved_records=collections.defaultdict(dict)
+            order=self.folder/'unit-order.json'
+            for key in (read(order).get('active_keys',[]) if order.is_file() else []):
+                path=self.folder/'hybrid'/(key+'.json')
+                if not path.is_file():continue
+                record=read(path)
+                if record.get('final') is not None:
+                    self.saved_records[record['source'].strip()][key]=record
+        return self.saved_records.get(source.strip(),{}).values()
+
+    def relink_saved_row(self,row):
+        if row['record_keys'] or not row['inputs'] or not isinstance(row['target'],str):return
+        from .hybrid import split_source
+        whole=canonical(row['target']);cursor=0;keys=[]
+        parts=split_source(row['inputs'][-1])
+        for index,part in enumerate(parts):
+            matches=[r for r in self.saved_candidates(part) if whole.startswith(canonical(r['final']),cursor)
+                and (index<len(parts)-1 or cursor+len(canonical(r['final']))==len(whole))]
+            pieces={canonical(r['final']) for r in matches}
+            if len(pieces)!=1:return
+            piece=next(iter(pieces));cursor+=len(piece);keys.extend(r['key'] for r in matches)
+        if cursor==len(whole):row['record_keys']=sorted(set(keys))
+
     def post(self,paragraph,text):
         if not self.collecting:return
         row=self.by_object.get(id(paragraph))
@@ -88,9 +139,14 @@ class RegionLedger:
             # thread-local state or a deduplicated content occurrence ID.
             with self.lock:
                 row['target']=text;row['record_keys']=[];keys=[];cursor=0;whole=canonical(text)
-                for part in split_source(row['inputs'][-1]) if row['inputs'] else []:
+                parts=split_source(row['inputs'][-1]) if row['inputs'] else []
+                for index,part in enumerate(parts):
                     choices=[r for r in self.source_records.get(part.strip(),{}).values() if r.get('final') is not None]
-                    matches=[r for r in choices if whole.startswith(canonical(r['final']),cursor)]
+                    matches=[r for r in choices if whole.startswith(canonical(r['final']),cursor)
+                        and (index<len(parts)-1 or cursor+len(canonical(r['final']))==len(whole))]
+                    if not matches:
+                        matches=[r for r in self.saved_candidates(part) if whole.startswith(canonical(r['final']),cursor)
+                            and (index<len(parts)-1 or cursor+len(canonical(r['final']))==len(whole))]
                     pieces={canonical(r['final']) for r in matches}
                     if len(pieces)!=1:break
                     piece=next(iter(pieces));cursor+=len(piece);keys.extend(r['key'] for r in matches)
@@ -111,25 +167,34 @@ class RegionLedger:
         issues=[];checked=0;glyph_count=0
         if self.unknown:issues.append(dict(code='unmapped_translation',count=len(self.unknown)))
         page_map={source+1:target for target,source in enumerate(selected)}
+        cid_pages={page_map[row['source_page']] for row in self.rows if row['source_page'] in page_map
+            and any(re.fullmatch(r'\(cid:\d+\)',g['text']) for g in row.get('glyphs',[]))}
         with fitz.open(path) as pdf:
-            pools=[];used=[set() for _ in pdf]
-            for page in pdf:
-                pool=collections.defaultdict(list)
-                textpage=page.get_textpage()
+            pools=[];raw_pools=[];used=[set() for _ in pdf];used_cids=[set() for _ in pdf]
+            for page_index,page in enumerate(pdf):
+                pool=collections.defaultdict(list);raw_pool=collections.defaultdict(list)
+                # The default TextPage substitutes some embedded-font CIDs
+                # with U+FFFD. RAWDICT flags retain the actual PDF codepoints.
+                textpage=page.get_textpage(flags=fitz.TEXTFLAGS_RAWDICT)
                 for block in page.get_text('rawdict',textpage=textpage)['blocks']:
                     for line in block.get('lines',[]):
                         for span in line.get('spans',[]):
                             for char in span.get('chars',[]):
                                 x0,y0,x1,y1=char['bbox'];x=(x0+x1)/2;y=(y0+y1)/2
-                                for c in ('\ufffd' if char['c']=='\ufffd' else canonical(char['c'])):
-                                    item=(glyph_count,c,x,y)
-                                    glyph_count+=1;pool[(math.floor(x/16),math.floor(y/16),c)].append(item)
-                pools.append(pool)
+                                raw_id=glyph_count;glyph_count+=1
+                                if page_index in cid_pages:
+                                    raw_pool[(math.floor(x/16),math.floor(y/16),char['c'])].append((raw_id,char['c'],x,y))
+                                for offset,c in enumerate('\ufffd' if char['c']=='\ufffd' else canonical(char['c'])):
+                                    item_id=raw_id if offset==0 else glyph_count
+                                    if offset:glyph_count+=1
+                                    pool[(math.floor(x/16),math.floor(y/16),c)].append((item_id,c,x,y))
+                pools.append(pool);raw_pools.append(raw_pool)
             source_pdf=fitz.open(source_path) if source_path is not None else None
             try:
               for row in self.rows:
                 page_index=page_map.get(row['source_page'])
                 if page_index is None:continue
+                self.relink_saved_row(row)
                 problems=[];target=row['target'];glyphs=row.get('glyphs',[])
                 if row['policy']=='translate':
                     # Bare numbers, formulas and code can follow the native
@@ -144,8 +209,10 @@ class RegionLedger:
                 if collections.Counter(expected)-collections.Counter(produced):problems.append('typeset_text_missing')
                 missing=0;needed=0
                 page=pdf[page_index];height=page.mediabox.height
-                preserved_abandon=False
-                if source_pdf is not None and row['role']=='abandon' and not row['inputs'] and row['source_box']:
+                preserved_pixels=False
+                if (source_pdf is not None and
+                        (row['policy']=='preserved_figure' or row['role'] in {'abandon','fallback_line'})
+                        and not row['inputs'] and row['source_box']):
                     # Rotated metadata may use glyph coordinates that are not
                     # directly comparable with extraction boxes. Demand exact
                     # pixel preservation of that source region instead.
@@ -153,9 +220,8 @@ class RegionLedger:
                     clip=fitz.Rect(x0-2,height-y1-2,x1+2,height-y0+2)
                     original=source_pdf[row['source_page']-1].get_pixmap(clip=clip,colorspace=fitz.csGRAY,alpha=False)
                     rendered=page.get_pixmap(clip=clip,colorspace=fitz.csGRAY,alpha=False)
-                    preserved_abandon=(original.width==rendered.width and original.height==rendered.height
-                                       and original.samples==rendered.samples)
-                for glyph in ([] if preserved_abandon else glyphs):
+                    preserved_pixels=pixels_preserved(original,rendered)
+                for glyph in ([] if preserved_pixels else glyphs):
                     x0,y0,x1,y1=glyph['box'];x=(x0+x1)/2;y=height-(y0+y1)/2
                     # PDF extraction boxes are font ascenders, while the IL
                     # boxes are advance-height boxes. The baseline offset can
@@ -166,6 +232,21 @@ class RegionLedger:
                     for c in ('\ufffd' if cid_glyph else canonical(glyph['text'])):
                         needed+=1;options=[]
                         if cid_glyph:tolerance=max(tolerance,7.)
+                        if cid_glyph:
+                            # An embedded math font may expose its CID as a
+                            # raw control/Latin code in the exported PDF, not
+                            # U+FFFD. Match that exact CID at its planned
+                            # position before treating the glyph as missing.
+                            code=int(glyph['text'][5:-1]);raw=chr(code) if code<=0x10ffff else None
+                            cid_tolerance=max(tolerance,10.)
+                            if raw is not None:
+                                for gx in range(math.floor((x-cid_tolerance)/16),math.floor((x+cid_tolerance)/16)+1):
+                                    for gy in range(math.floor((y-cid_tolerance)/16),math.floor((y+cid_tolerance)/16)+1):
+                                        for item in raw_pools[page_index].get((gx,gy,raw),[]):
+                                            if item[0] not in used_cids[page_index] and abs(item[2]-x)<=2 and abs(item[3]-y)<=cid_tolerance:
+                                                options.append(((item[2]-x)**2+(item[3]-y)**2,item[0]))
+                            if options:
+                                used_cids[page_index].add(min(options)[1]);continue
                         for gx in range(math.floor((x-tolerance)/16),math.floor((x+tolerance)/16)+1):
                             for gy in range(math.floor((y-tolerance)/16),math.floor((y+tolerance)/16)+1):
                                 for item in pools[page_index].get((gx,gy,c),[]):

@@ -9,11 +9,14 @@ def inspect_output(path,selected,extracted_pages=None,source_path=None):
         with fitz.open(source_path) as source:
             for source_index in selected:
                 source_page=source[source_index]
-                inherited.append(source_page.get_text(textpage=source_page.get_textpage()).count('\ufffd'))
+                inherited.append(source_page.get_text(textpage=source_page.get_textpage(flags=fitz.TEXTFLAGS_TEXT)).count('\ufffd'))
     with fitz.open(path) as doc:
         if len(doc)!=len(selected):issues.append(dict(code='page_count'))
         for i,page in enumerate(doc):
-            textpage=page.get_textpage();text=page.get_text(textpage=textpage)
+            # Match PyMuPDF's ordinary text extraction flags. Its bare
+            # get_textpage() omits TEXT_USE_CID_FOR_UNKNOWN_UNICODE, turning
+            # preserved font CIDs into U+FFFD despite a valid visible glyph.
+            textpage=page.get_textpage(flags=fitz.TEXTFLAGS_TEXT);text=page.get_text(textpage=textpage)
             if extracted_pages is not None:extracted_pages.append(text)
             spans=[s for b in page.get_text('dict',textpage=textpage)['blocks'] if 'lines' in b for l in b['lines'] for s in l['spans']]
             # Text extraction uses unrotated page coordinates; page.rect is in

@@ -39,7 +39,7 @@ class Window(QWidget):
         self.bar=QProgressBar();layout.addWidget(self.bar)
         self.details=QLabel('한국어 PDF · 원문을 왼쪽에 유지한 대조본 · 로컬 처리 근거를 저장합니다.');self.details.setWordWrap(True);layout.addWidget(self.details)
         row=QHBoxLayout()
-        for label,file in [('한국어 PDF','Korean.pdf'),('영한 대조본','Bilingual.pdf'),('결과 폴더','')]:
+        for label,file in [('한국어 PDF','Korean.pdf'),('영한 대조본','Bilingual.pdf'),('그림 범례','FigureLegends.html'),('결과 폴더','')]:
             button=QPushButton(label);button.clicked.connect(lambda checked=False,file=file:self.open(file));row.addWidget(button)
         layout.addLayout(row)
         note=QLabel('기존 논문 번역기와 프로그램·작업 기록을 분리했습니다. 원본을 덮어쓰지 않습니다.\n공개 초기 실험판: 번역 의미·복잡한 표·수식·희미한 스캔의 정확도는 아직 검증 중입니다.');note.setWordWrap(True);note.setStyleSheet('color:#866a2d;font-size:13px');layout.addWidget(note)
@@ -78,7 +78,7 @@ class Window(QWidget):
             try:alive=psutil.pid_exists(state['pid']) and abs(psutil.Process(state['pid']).create_time()-state['process_created'])<1
             except psutil.Error:alive=False
             if not alive:state.update(status='failed',stage='이전 실행이 중단되었습니다. 다시 시작하면 번역 캐시를 사용합니다.');active=False
-        self.start.setEnabled(not active);self.cancel.setEnabled(active);self.resume.setEnabled(not active and state['status'] in {'failed','cancelled'})
+        self.start.setEnabled(not active);self.cancel.setEnabled(active);self.resume.setEnabled(not active and state['status'] in {'failed','cancelled','partial'})
         self.status.setText(state.get('stage','대기'));self.bar.setValue(round(state.get('progress',0)))
         elapsed=state.get('elapsed_seconds',0);self.details.setText(f'경과 {int(elapsed//60)}분 {int(elapsed%60)}초 · '+state.get('error','쪽 구조와 원문 대응을 유지해 처리 중입니다.'))
     def open(self,file):

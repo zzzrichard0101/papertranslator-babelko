@@ -106,6 +106,7 @@ def export(job,output_parent=None,pages=''):
     from .pdf_preservation import optimize
     from .progress import translate
     from .references import preserve
+    from .figure_legends import preserve as preserve_figures
     from .validation import inspect_output,tracking_status
     job=Path(job).resolve();state=read(job/'state.json')
     if pages:
@@ -153,7 +154,7 @@ def export(job,output_parent=None,pages=''):
             config=create_babeldoc_config(settings,input_pdf)
         config.translator=translator;config.term_extraction_translator=translator;config.add_formula_placehold_hint=True
         config.working_dir=work/'intermediate';config.working_dir.mkdir();config._is_temp_dir=False
-        with preserve(work),preview_layout(translator,input_pdf):
+        with preserve(work),preserve_figures(work),preview_layout(translator,input_pdf):
             result=translate(config,progress,cancel)
         if result is None or not result.mono_pdf_path:raise RuntimeError('확인용 PDF 조판 결과가 없습니다.')
         output_parent=Path(output_parent or state['destination']);output_parent.mkdir(parents=True,exist_ok=True)

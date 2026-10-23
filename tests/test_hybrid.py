@@ -1,7 +1,7 @@
 import json,threading
 from unittest.mock import patch
 import pytest
-from babelko.hybrid import errors,apply_patches,HybridTranslator,context_hints,split_source,NUMBER_SPINE
+from babelko.hybrid import errors,apply_patches,HybridTranslator,context_hints,split_source,NUMBER_SPINE,auditable_issues,record_errors,override_fingerprint,VALIDATION_POLICY_REVISION
 from babelko.translator import validate_items
 from types import SimpleNamespace
 
@@ -31,6 +31,163 @@ from types import SimpleNamespace
 ])
 def test_equivalent_numeric_forms(source,target):
     assert not errors(source,target)
+
+
+def test_wrapped_method_with_benchmark_value_is_not_a_code_call():
+    source='The method beats En- doGSLAM(0.65 FPS) on the benchmark.'
+    target='이 방법은 벤치마크에서 EndoGSLAM(0.65 FPS)보다 우수하다.'
+    assert not errors(source,target)
+
+
+def test_machine_asset_identifiers_are_preserved_as_literal_data():
+    from babelko.hybrid import literal
+    value='c2_transverse1_t3_v3 c2_transverse1_t4_v3 c2_transverse2_t1_v2'
+    assert literal(value)
+    assert not errors(value,value)
+    assert not literal('The c2_transverse1_t3_v3 file contains measurements.')
+
+
+def test_repeated_diagram_identifiers_keep_their_exact_occurrences():
+    from babelko.hybrid import literal
+    row='MLP 3DGS MLP 3DGS MLP 3DGS MLP 3DGS'
+    assert literal(row)
+    assert not literal('3DGS NETWORK ARCHITECTURE')
+    assert errors(row,row[:-5])
+
+
+def test_standalone_formula_with_native_placeholders_is_literal_not_english_prose():
+    from babelko.hybrid import literal
+    equation="<style id='1'>6 </style>c{v3}<style id='4'>(</style>Y{v6}V{v7}Y{v8}w{v9}<style id='10'>)</style>{v12}Y{v13}V{v14}<style id='15'>ˆ</style>C{v17}"
+    assert literal(equation)
+    assert not literal('We use {v1}, {v2}, and {v3} in the method.')
+
+
+def test_compact_iteration_time_label_replaces_clipped_prose_candidate(tmp_path):
+    from babelko.hybrid import compact_metric_label
+    from babelko.storage import read
+    assert compact_metric_label('25 It. 12.8s')=='25회 12.8초'
+    assert compact_metric_label('The method used 25 It. 12.8s') is None
+    t=object.__new__(HybridTranslator);t.folder=tmp_path;t.checkpoints=tmp_path;t.cancel=lambda:False
+    t.stats={'reviewed':0};t.hard_failures=[]
+    record=dict(key='metric',source='25 It. 12.8s',draft='25번 항목. 소요 시간: 12.8초',
+        final='25번 항목. 소요 시간: 12.8초',label='text',context='')
+    t.units={'metric':record};t.audit_batch=lambda records:None
+    t.ensure_assured=lambda row:None
+    t.review(lambda *_:None)
+    assert record['final']=='25회 12.8초' and record['decision']=='compact_figure_metric'
+    assert read(tmp_path/'metric.json')['final']=='25회 12.8초'
+
+
+@pytest.mark.parametrize('source,target',[
+    ('The coefficient is nonzero in (26).','계수는 0이 아니며 식 (26)에 나타난다.'),
+    ('The profile isaone-dimensional Gaussian.','프로파일은 1차원 가우스 분포이다.'),
+    ('One quarter of the tiles is selected from 4 images.','4개 이미지에서 타일의 1/4만 선택한다.'),
+])
+def test_written_quantities_and_korean_fraction_suffixes(source,target):
+    assert not errors(source,target)
+    if '1/4' in target:assert errors(source,target.replace('1/4','1/3'))
+
+
+def test_only_uncertain_heuristics_can_use_audited_exception():
+    source='This method compares ModelScore(x) with the baseline.'
+    target='이 방법은 기본 방식과 모델 점수를 비교한다.'
+    assert auditable_issues(source,target)==['코드 함수 식별자 변경']
+    assert not auditable_issues('function ModelScore(x) returns 24.','함수 모델 점수는 24를 반환한다.')
+    assert not auditable_issues('The value is 24.','값은 42이다.')
+    record=dict(source=source,final=target,label='text',heuristic_override=dict(
+        revision=VALIDATION_POLICY_REVISION,issues=auditable_issues(source,target),
+        fingerprint=override_fingerprint(source,target,'text',auditable_issues(source,target))))
+    assert record_errors(record)  # A signed override without independent audit is insufficient.
+
+
+def test_heuristic_exception_requires_current_full_audit_and_exact_target(tmp_path):
+    from babelko.assurance import REVISION,fingerprint
+    source='This method compares ModelScore(x) with the baseline.'
+    target='이 방법은 기본 방식과 모델 점수를 비교한다.'
+    translator=object.__new__(HybridTranslator)
+    translator.checkpoints=tmp_path;translator.cancel=lambda:False;translator.hard_failures=[]
+    translator.stats={};translator._request=lambda *a:None
+    record=dict(key='case',source=source,label='text',context='',draft=target,final_error='earlier failed')
+    def faithful(candidate,*args):
+        return dict(revision=REVISION,fingerprint=fingerprint(candidate),checks=[
+            dict(id='s0',verdict='faithful',evidence=['t0'],reason=''),
+            dict(id='t0',verdict='faithful',evidence=['s0'],reason='')])
+    with patch('babelko.assurance.audit',side_effect=faithful):
+        assert translator.accept_audited_heuristic(record,[target])
+    assert record_errors(record)==[]
+    assert record['decision']=='audited_heuristic_exception'
+    assert 'final_error' not in record
+    record['final']=target+' 추가 내용'
+    assert record_errors(record)
+    record['final']=target
+    record['neighbors']=['Different source neighbor']
+    assert record_errors(record)  # Context changes invalidate the previous evidence.
+
+
+def test_heuristic_exception_rejects_negative_audit_and_hard_failures(tmp_path):
+    from babelko.assurance import REVISION,fingerprint
+    translator=object.__new__(HybridTranslator)
+    translator.checkpoints=tmp_path;translator.cancel=lambda:False;translator.hard_failures=[]
+    translator.stats={};translator._request=lambda *a:None
+    source='This method compares ModelScore(x) with the baseline.'
+    target='이 방법은 기본 방식과 모델 점수를 비교한다.'
+    record=dict(key='case',source=source,label='text',context='')
+    def negative(candidate,*args):
+        return dict(revision=REVISION,fingerprint=fingerprint(candidate),checks=[
+            dict(id='s0',verdict='partial',evidence=['t0'],reason='Method identifier omitted.'),
+            dict(id='t0',verdict='faithful',evidence=['s0'],reason='')])
+    with patch('babelko.assurance.audit',side_effect=negative):
+        assert not translator.accept_audited_heuristic(record,[target])
+    assert 'final' not in record
+    hard=dict(key='number',source='The value is 24.',label='text',context='')
+    with patch('babelko.assurance.audit',side_effect=AssertionError('hard guard must not audit')):
+        assert not translator.accept_audited_heuristic(hard,['값은 42이다.'])
+
+
+def test_retranslation_falls_back_to_independent_audit_after_repair_retries(tmp_path):
+    from babelko.assurance import REVISION,fingerprint
+    translator=object.__new__(HybridTranslator)
+    translator.checkpoints=tmp_path;translator.cancel=lambda:False;translator.hard_failures=[]
+    translator.stats={};translator.retries=0
+    source='This method compares ModelScore(x) with the baseline.'
+    target='이 방법은 기본 방식과 모델 점수를 비교한다.'
+    calls=[]
+    def request(*args):calls.append(args);return target
+    translator._request=request
+    record=dict(key='retry',source=source,label='text',context='',draft=target)
+    def faithful(candidate,*args):
+        return dict(revision=REVISION,fingerprint=fingerprint(candidate),checks=[
+            dict(id='s0',verdict='faithful',evidence=['t0'],reason=''),
+            dict(id='t0',verdict='faithful',evidence=['s0'],reason='')])
+    with patch('babelko.assurance.audit',side_effect=faithful):
+        translator.retranslate(record)
+    assert len(calls)==3
+    assert translator.retries==2
+    assert record['final']==target and not record_errors(record)
+    assert not translator.hard_failures
+
+
+def test_failed_edit_can_recover_a_faithful_saved_draft(tmp_path):
+    from babelko.assurance import REVISION,fingerprint
+    source='One quarter of the tiles is selected from 4 images.'
+    draft='4개 이미지에서 타일의 1/4만 선택한다.'
+    final='4개 이미지에서 타일 일부만 선택한다.'
+    record=dict(key='draft',source=source,label='text',context='',draft=draft,final=final,
+        final_error='meaning mismatch')
+    record['assurance']=dict(revision=REVISION,fingerprint=fingerprint(record),checks=[
+        dict(id='s0',verdict='partial',evidence=['t0'],reason='Fraction omitted.'),
+        dict(id='t0',verdict='faithful',evidence=['s0'],reason='')])
+    translator=object.__new__(HybridTranslator)
+    translator.checkpoints=tmp_path;translator.cancel=lambda:False;translator.hard_failures=[]
+    translator.stats={};translator._request=lambda *a:None
+    def faithful(candidate,*args):
+        return dict(revision=REVISION,fingerprint=fingerprint(candidate),checks=[
+            dict(id='s0',verdict='faithful',evidence=['t0'],reason=''),
+            dict(id='t0',verdict='faithful',evidence=['s0'],reason='')])
+    with patch('babelko.assurance.audit',side_effect=faithful):
+        assert translator.try_checked_draft(record)
+    assert record['final']==draft and not record_errors(record)
+    assert 'final_error' not in record
 
 
 @pytest.mark.parametrize('source,target',[
@@ -100,6 +257,7 @@ def test_staged_native_replay_uses_pristine_il_and_restores_source_titles(tmp_pa
     config=SimpleNamespace(shared_context_cross_split_part=SimpleNamespace(first_paragraph='original title',recent_title_paragraph='original section'))
     translator=SimpleNamespace(folder=tmp_path,stats={},units={},hard_failures=[],phase='draft')
     translator.save_summary=lambda:None;translator.assurance_summary=lambda:dict(status='passed')
+    translator.reconcile_failures=lambda:None
     def review(progress):events.append('review');translator.phase='replay'
     translator.review=review
     class Native:
@@ -113,6 +271,56 @@ def test_staged_native_replay_uses_pristine_il_and_restores_source_titles(tmp_pa
             high.ILTranslatorLLMOnly(translator,config).translate(docs)
     assert events==[('draft','source','original title'),'switch','review',('replay','source','original title')]
     assert docs.page[0]['text']=='replay target'
+
+
+def test_il_snapshot_handles_deep_layout_and_keeps_shared_links():
+    from dataclasses import dataclass
+    from babelko.hybrid import snapshot_pages
+    from babeldoc.format.pdf.document_il.frontend.il_creater_active_support import LazyPassthroughInstruction,PassthroughSnapshot
+
+    @dataclass(slots=True)
+    class Node:
+        child: object
+
+    shared=Node('original')
+    lazy=LazyPassthroughInstruction(PassthroughSnapshot())
+    root=[shared,shared,lazy]
+    for _ in range(1200):root=[root]
+    saved=snapshot_pages(root)
+    original=root;copied=saved
+    for _ in range(1200):
+        original=original[0];copied=copied[0]
+    assert copied[0] is copied[1]
+    assert copied[0] is not original[0]
+    assert copied[2] is lazy
+    shared.child='changed'
+    assert copied[0].child=='original'
+
+
+def test_dense_style_translation_batches_nonempty_segments_without_losing_tags():
+    source=''.join(f"<style id='{i}'>문장{i}</style>" for i in range(12))
+    t=object.__new__(HybridTranslator);t.cancel=lambda:False
+    calls=[]
+    def request(messages,schema):
+        payload=json.loads(messages[1]['content']);calls.append(len(payload['SOURCE_SEGMENTS']))
+        return json.dumps(payload['SOURCE_SEGMENTS'],ensure_ascii=False)
+    t._request=request
+    assert t.protected_translation(source,dict(label='text',context=''),numeric_failure=False)==source
+    assert calls==[5,5,2]
+
+
+def test_dense_style_batches_allow_numeric_phrase_to_cross_style_boundary():
+    from babelko.translator import number_errors
+    parts=['문장']*12;parts[5]='2D 위치';parts[6]='3DGS에서'
+    source=''.join(f"<style id='{i}'>{part}</style>" for i,part in enumerate(parts))
+    t=object.__new__(HybridTranslator);t.cancel=lambda:False
+    def request(messages,schema):
+        values=json.loads(messages[1]['content'])['SOURCE_SEGMENTS']
+        return json.dumps([v.replace('2D 위치','2D 위치 3DGS').replace('3DGS에서','에서') for v in values],ensure_ascii=False)
+    t._request=request
+    target=t.protected_translation(source,dict(label='text',context=''),numeric_failure=False)
+    assert '2D 위치 3DGS</style><style id=\'6\'>에서' in target
+    assert not number_errors(source,target)
 
 
 def test_cancelled_draft_makes_no_request_or_checkpoint(tmp_path):
@@ -269,7 +477,7 @@ def test_repeated_meaning_failure_stops_without_success_or_infinite_retries(tmp_
 def test_review_defers_one_bad_unit_processes_other_units_then_recovers(tmp_path):
     from babelko.storage import read
     t=object.__new__(HybridTranslator);t.folder=tmp_path;t.checkpoints=tmp_path;t.cancel=lambda:False
-    t.stats={'reviewed':0};t.hard_failures=[];events=[]
+    t.stats={'reviewed':0,'replayed':0};t.hard_failures=[];events=[]
     a=dict(key='a',source='The first result is valid.',final='첫 결과는 유효하다.',label='text',context='')
     b=dict(key='b',source='The second result is valid.',final='둘째 결과는 유효하다.',label='text',context='')
     t.units={'a':a,'b':b};failed=[False]
@@ -284,18 +492,37 @@ def test_review_defers_one_bad_unit_processes_other_units_then_recovers(tmp_path
     assert read(tmp_path/'pending-review.json')['pending']==[]
 
 
-def test_unresolved_unit_cannot_complete_but_does_not_block_other_units(tmp_path):
+def test_unresolved_unit_uses_source_in_replay_and_remains_retryable(tmp_path):
     from babelko.storage import read
     t=object.__new__(HybridTranslator);t.folder=tmp_path;t.checkpoints=tmp_path;t.cancel=lambda:False
-    t.stats={'reviewed':0};t.hard_failures=[];events=[]
+    t.stats={'reviewed':0,'replayed':0};t.hard_failures=[];events=[]
     t.units={k:dict(key=k,source='The result '+k+' is valid.',final='결과는 유효하다.',label='text',context='') for k in ['a','b']}
     def ensure(record):
         events.append(record['key'])
         if record['key']=='a':raise ValueError('persistent defect')
     t.ensure_assured=ensure;t.recover_segments=lambda _:None;t.audit_batch=lambda records:None
-    with pytest.raises(RuntimeError,match='미해결 문단 1개'):t.review(lambda *_:None)
-    assert events==['a','b','a','a'] and t.phase=='review'
+    t.review(lambda *_:None)
+    assert events==['a','b','a','a'] and t.phase=='replay'
     assert [r['key'] for r in read(tmp_path/'pending-review.json')['pending']]==['a']
+    assert t.unresolved_keys=={'a'} and t.assurance_summary()['status']=='failed'
+    assert t.unit(t.units['a']['source'],'text','')==t.units['a']['source']
+
+
+def test_new_replay_failure_keeps_source_and_checkpoint(tmp_path):
+    from babelko.storage import read
+    t=object.__new__(HybridTranslator);t.folder=tmp_path;t.checkpoints=tmp_path;t.cancel=lambda:False
+    t.phase='replay';t.units={};t.hard_failures=[];t.stats={'replayed':0};t.unresolved_keys=set()
+    source='The method is accurate.'
+    t.retranslate=lambda record: (_ for _ in ()).throw(ValueError('unit review failed'))
+    assert t.unit(source,'text','')==source
+    record=next(iter(t.units.values()))
+    assert record['key'] in t.unresolved_keys
+    assert read(tmp_path/'pending-review.json')['pending'][0]['key']==record['key']
+    assert read(tmp_path/(record['key']+'.json'))['final_error']=='unit review failed'
+    assert t.hard_failures and t.assurance_summary()['status']=='failed'
+    t.hard_failures.append(dict(source=source,error='duplicate retry'))
+    t.reconcile_failures()
+    assert t.hard_failures==[dict(key=record['key'],source=source,error='unit review failed')]
 
 
 def test_segmented_recovery_commits_only_a_complete_validated_candidate(tmp_path):
@@ -310,7 +537,7 @@ def test_segmented_recovery_commits_only_a_complete_validated_candidate(tmp_path
     t._request=request;t.recover_segments(r)
     assert len(calls)>1 and not errors(source,r['final'])
     assert r['decision']=='segmented_retranslation' and not t.hard_failures and not r.get('final_error')
-    previous=r['final'];t._request=lambda messages:'연구에는 42명이 참여했다.'
+    previous=r['final'];t._request=lambda *args:'연구에는 42명이 참여했다.'
     with pytest.raises(ValueError):t.recover_segments(r)
     assert r['final']==previous
 
@@ -369,3 +596,31 @@ def test_resume_catalog_order_is_independent_of_native_worker_completion(tmp_pat
     assert events==['a','b','c']
     assert read(tmp_path/'pending-review.json')['active_keys']==['a','b','c']
     assert t.units['b']['neighbors']==[t.units['a']['source'],t.units['c']['source']]
+
+
+def test_scan_recovery_revisits_accepted_numeric_fallback_using_original_draft(tmp_path):
+    from babelko.hybrid import scan_recovery_records
+    from babelko.storage import save
+    good=dict(key='good',source='The group had 10 participants.',
+        draft='집단에는 10명이 있었다.',final='집단에는 10명이 있었다.')
+    artifact=dict(key='artifact',source='They had the means 10 control the group.',
+        draft='그들은 집단을 통제할 수단이 있었다.',final='그들에게는 10 집단을 통제할 수단이 있었다.')
+    for record in (good,artifact):save(tmp_path/(record['key']+'.json'),record)
+    assert [r['key'] for r in scan_recovery_records(tmp_path,[])]==['artifact']
+
+
+def test_scan_recovery_revisits_failed_glyph_fragments_after_review_list_clears(tmp_path):
+    from babelko.hybrid import scan_recovery_records
+    from babelko.storage import save
+    broken=dict(key='glyphs',source='D{v1}r{v2}a{v3}f{v4}t{v5} writing is important.',
+        formula_hints={f'{{v{i}}}':c for i,c in enumerate('raftx',1)},
+        final_error='영어 본문·제목 미번역')
+    save(tmp_path/'glyphs.json',broken)
+    assert [r['key'] for r in scan_recovery_records(tmp_path,[])]==['glyphs']
+
+
+def test_coordinated_count_and_types_cannot_collapse_to_count_only():
+    source='Describe the number and types of levels in the outline.'
+    assert '병렬 개념 누락: 원문의 개수와 유형을 모두 명시하세요.' in errors(
+        source,'개요가 몇 가지 수준으로 구성되는지 설명한다.')
+    assert not errors(source,'개요를 이루는 수준의 수와 유형을 설명한다.')

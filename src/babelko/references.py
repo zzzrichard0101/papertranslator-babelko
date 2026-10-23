@@ -8,11 +8,13 @@ from contextlib import contextmanager
 from unittest.mock import patch
 from .storage import save
 
-REVISION='bibliography-original-2'
+REVISION='bibliography-original-and-contents-6'
 TAGS=re.compile(r'<[^>]+>')
 HEADING=re.compile(r'^(?:(?:\d+(?:\.\d+)*|[A-Z])\.?\s+)?(?:references|bibliography|works cited|literature cited|참고\s*문헌)\s*[:.]?$',re.I)
 AUTHOR_YEAR=re.compile(r"\b[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s+(?:[A-Z]\.\s*){1,3}(?:(?:,?\s*&\s*|,\s*)[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s*(?:[A-Z]\.\s*){1,3})?\s*(?:\(Ed(?:s)?\.\)\.\s*)?\((?:18|19|20)\d{2}[a-z]?\)\.")
-NUMBERED=re.compile(r'^\s*(?:\[\d+\]|\d+\.)\s+(?:[A-Z]\.\s*)*[A-Z][A-Za-z’\'\-]+(?:,|\s+[A-Z]\.)')
+# Numeric labels in camera-ready papers usually precede full given names,
+# not APA surnames. A clipped column may also lose the opening '['.
+NUMBERED=re.compile(r'^\s*(?:\[\d+\]|\d+\]|\d+\.)\s+(?:[A-Z]\.\s*)*[A-Z][A-Za-z’\'\-]+(?:\s+[A-Z][A-Za-z’\'\-]+){0,3}(?:,|\s+[A-Z]\.)')
 METADATA=re.compile(r'https?://doi\.org/|\bdoi\s*:|\b\d+\s*\(\d+\)\s*[,.:]|\b(?:pp\.|vol\.|press\b|publisher\b)|\b[A-Z]{2}:\s*[A-Z]',re.I)
 
 
@@ -33,26 +35,80 @@ def entry(value):
 
 def select(docs):
     selected=[];active=False
-    for page in docs.page:
+    pages=list(docs.page)
+    page_values=[[text(p) for p in getattr(page,'pdf_paragraph',[])] for page in pages]
+    def dense_index(values):
+        combined=' '.join(values)
+        return (len(re.findall(r'(?<![A-Za-z0-9])\d{1,4}(?:\s*[-–]\s*\d{1,4})?(?![A-Za-z0-9])',combined))>=40
+            and not any(entry(value) for value in values))
+    dense=[dense_index(values) for values in page_values]
+    index_pages={i for i,values in enumerate(page_values) if dense[i] and any(
+        re.fullmatch(r'(?:\d{1,4}\s+)?Index',value,re.I) for value in values)}
+    # A first index page may have a visual title that the text layer misses.
+    # Its many locator numbers and the next page's explicit Index header give
+    # document-level evidence without assuming every numbered page is an index.
+    for seed in sorted(index_pages):
+        # Running "Index" headers may be missing on several initial scan
+        # pages. Walk through contiguous locator-dense pages, bounded so an
+        # unrelated numbered appendix cannot be swallowed indefinitely.
+        i=seed
+        for _ in range(12):
+            if not i or not dense[i-1]:break
+            i-=1;index_pages.add(i)
+    for i in range(1,len(pages)):
+        if i-1 in index_pages and dense[i]:index_pages.add(i)
+    for page_index,page in enumerate(pages):
         paragraphs=getattr(page,'pdf_paragraph',[])
-        values=[text(p) for p in paragraphs]
+        values=page_values[page_index]
+        if page_index in index_pages:
+            selected.extend((page,p,'index_section') for p in paragraphs)
+            active=False
+            continue
+        bridge_until=-1
         # A new page cannot inherit a bibliography exemption just because an
         # OCR heading was missed. Require fresh entry evidence on that page.
         if active and not any(entry(v) for v in values):active=False
         for i,(p,value) in enumerate(zip(paragraphs,values)):
             heading=bool(HEADING.fullmatch(value))
+            # A scanned separator or damaged running title can sit between a
+            # bibliography heading and its first real citation. Its text is
+            # not trustworthy, but the following citation establishes scope.
+            next_entries=[k for k in range(i+1,min(len(values),i+9)) if entry(values[k])]
+            section_title=bool(re.match(r'^(?:appendix|chapter|discussion|conclusion)\b',value,re.I))
+            heading_bridge=(getattr(p,'layout_label','')=='title' and not heading and
+                (i<=bridge_until or bool(next_entries)) and not section_title)
             if heading:
-                upcoming=[]
-                for q,v in zip(paragraphs[i+1:],values[i+1:]):
-                    if getattr(q,'layout_label','')=='title' and not HEADING.fullmatch(v):break
-                    upcoming.append(v)
                 # A table of contents entry does not open an exempt section.
-                active=any(entry(v) for v in upcoming)
-            elif getattr(p,'layout_label','')=='title' and value and not entry(value):
+                candidates=[]
+                for k in next_entries:
+                    if any(getattr(paragraphs[m],'layout_label','')=='title' and
+                        re.match(r'^(?:appendix|chapter|discussion|conclusion)\b',values[m],re.I)
+                        for m in range(i+1,k)):continue
+                    candidates.append(k)
+                active=bool(candidates);bridge_until=min(candidates) if candidates else -1
+            elif getattr(p,'layout_label','')=='title' and value and not entry(value) and not (active and heading_bridge):
                 active=False
             standalone=entry(value)
             if heading and active or standalone or active and value:
                 selected.append((page,p,'reference_section' if active else 'citation_structure'))
+    # A compact appendix contents block is sometimes printed above the first
+    # real appendix section on the same page. Its leader dots and right-aligned
+    # page locators may be fused into giant PDF paragraphs. Translating such a
+    # paragraph destroys the rows; retain the exact original glyphs until a
+    # verified row-preserving compositor is available.
+    known={id(p) for _,p,_ in selected}
+    for page in pages:
+        paragraphs=getattr(page,'pdf_paragraph',[])
+        values=[text(p) for p in paragraphs]
+        for start,value in enumerate(values):
+            if not re.fullmatch(r'Appendix|Appendices',value,re.I) or getattr(paragraphs[start],'layout_label','')!='title':continue
+            end=next((i for i in range(start+1,len(values)) if getattr(paragraphs[i],'layout_label','')=='title'
+                and re.match(r'^[A-Z]\.\s+',values[i])),None)
+            if end is None:continue
+            if sum(bool(re.search(r'(?:\s*\.\s*){8,}',item)) for item in values[start+1:end])<2:continue
+            for p in paragraphs[start+1:end]:
+                if id(p) not in known:selected.append((page,p,'appendix_contents'));known.add(id(p))
+            break
     return selected
 
 

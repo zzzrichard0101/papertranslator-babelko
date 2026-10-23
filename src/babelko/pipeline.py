@@ -79,6 +79,58 @@ def compose(original,korean,destination,selected):
         dual.save(destination,garbage=4,deflate=True,clean=False)
 
 
+def revalidate_saved_output(folder,state,progress):
+    """Resume a job that finished translation/export but failed final PDF QA."""
+    if state.get('status') not in {'failed','partial'} or not state.get('output') or not state.get('output_hashes'):return False
+    out=Path(state['output'])
+    names=('Original.pdf','Korean.pdf','Bilingual.pdf','Quality.json')
+    if any(not (out/name).is_file() or digest(out/name)!=state['output_hashes'].get(name) for name in names):return False
+    if digest(folder/'Original.pdf')!=state.get('source_sha256'):return False
+    quality=read(out/'Quality.json')
+    from .figure_legends import REVISION as FIGURE_REVISION
+    if (quality.get('figures',{}).get('revision')!=FIGURE_REVISION or
+        quality.get('figures',{}).get('status')!='passed' or
+        any(not (out/name).is_file() or digest(out/name)!=state['output_hashes'].get(name)
+            for name in ('FigureLegends.html','FigureLegends.json'))):return False
+    if state.get('mode')=='hybrid':
+        from .hybrid import OUTPUT_POLICY_REVISION
+        if quality.get('hybrid_output_policy')!=OUTPUT_POLICY_REVISION:return False
+    if (quality.get('source_sha256')!=state['source_sha256'] or quality.get('checks',{}).get('status')!='failed'
+            or quality.get('unresolved_translation_failures')
+            or quality.get('translation_tracking',{}).get('status')!='passed'
+            or (state.get('mode')=='hybrid' and quality.get('meaning_assurance',{}).get('status')!='passed')):return False
+    if state.get('snapshot',{}).get('experimental_pipeline') and not (folder/'region-ledger.json').is_file():return False
+    from .validation import inspect_output,tracking_status
+    from .render_coverage import inspect as inspect_rendered
+    tracker=folder/'intermediate'/'translate_tracking.json'
+    if not tracker.is_file():return False
+    state['status']='validating';progress('저장된 PDF 재검증',98)
+    extracted=[];checks=inspect_output(out/'Korean.pdf',state['selected'],extracted,folder/'Original.pdf')
+    tracked=tracking_status(tracker)
+    rendered=inspect_rendered(out/'Korean.pdf',tracker,extracted)
+    regions=None
+    if state.get('snapshot',{}).get('experimental_pipeline'):
+        from .region_ledger import RegionLedger,REVISION as REGION_REVISION
+        ledger_data=read(folder/'region-ledger.json')
+        ledger=RegionLedger(folder);ledger.rows=ledger_data['regions']
+        regions=ledger.inspect(out/'Korean.pdf',state['selected'],folder/'Original.pdf')
+        if regions['status']=='passed':
+            save(folder/'region-ledger.json',{**ledger_data,'revision':REGION_REVISION,'regions':ledger.rows})
+        if regions['status']!='passed':checks['issues'].append(dict(code='spatial_region_missing',detail=regions))
+    if rendered['status']!='passed':checks['issues'].append(dict(code='rendered_prose_missing',detail=rendered))
+    if tracked['status']!='passed':checks['issues'].append(dict(code='tracked_translation_missing',detail=tracked))
+    checks['status']='failed' if checks['issues'] else 'passed'
+    quality.update(checks=checks,translation_tracking=tracked,rendered_prose=rendered)
+    if regions is not None:quality['region_coverage']=regions
+    save(out/'Quality.json',quality);save(folder/'quality.json',quality)
+    state['output_hashes']['Quality.json']=digest(out/'Quality.json')
+    state['status']='completed' if checks['status']=='passed' else 'partial'
+    if state['status']=='completed':state.pop('error',None)
+    else:state['error']=f"PDF는 생성했지만 검증 문제 {len(checks['issues'])}건이 남았습니다. Quality.json에서 위치와 원인을 확인하세요."
+    progress('저장된 PDF 재검증 완료' if state['status']=='completed' else 'PDF 저장됨 · 최종 검증 문제 있음',100)
+    return True
+
+
 def run(folder):
     from .engine import LocalEngine
     folder=Path(folder).resolve()
@@ -92,6 +144,13 @@ def run(folder):
         current=state.get('mode')!='hybrid'
         if not current and (out/'Quality.json').is_file():
             current=read(out/'Quality.json').get('meaning_assurance',{}).get('revision')==REVISION
+        if current and state.get('mode')=='hybrid' and (out/'Quality.json').is_file():
+            from .semantic_guards import REVISION as GUARDS_REVISION
+            current=read(out/'Quality.json').get('translation_guards',{}).get('revision')==GUARDS_REVISION
+        if current and (out/'Quality.json').is_file():
+            from .figure_legends import REVISION as FIGURE_REVISION
+            figures=read(out/'Quality.json').get('figures',{})
+            current=figures.get('revision')==FIGURE_REVISION and figures.get('status')=='passed'
         current=current and (out/'Quality.json').is_file() and read(out/'Quality.json').get('references',{}).get('revision')==REFERENCES_REVISION
         if current and state.get('snapshot',{}).get('experimental_pipeline'):
             from .region_ledger import REVISION as REGION_REVISION
@@ -122,6 +181,7 @@ def run(folder):
     cancel=lambda:(folder/'cancel').exists()
     try:
         if cancel():raise InterruptedError('취소됨')
+        if revalidate_saved_output(folder,state,progress):return state
         if digest(folder/'Original.pdf')!=state['source_sha256']:raise RuntimeError('작업 원본 해시 불일치')
         state['status']='preparing';state['progress']=0;state.pop('error',None);progress('글꼴·배치 모델 확인')
         with performance.measure('assets'):
@@ -218,17 +278,21 @@ def run(folder):
                 progress(message,percent)
             try:
                 from .references import preserve as preserve_references
+                from .figure_legends import preserve as preserve_figures
                 from .layout_cache import native_layout_cache
                 from .region_ledger import capture as capture_regions
-                with preserve_references(folder),staged_layout(translator,switch_to_editor,progress) if state['mode']=='hybrid' else nullcontext(),native_layout_cache(folder,input_pdf,config,progress,performance),capture_regions(translator.region_ledger) if translator.experimental_pipeline else nullcontext():
+                with preserve_references(folder),preserve_figures(folder),staged_layout(translator,switch_to_editor,progress) if state['mode']=='hybrid' else nullcontext(),native_layout_cache(folder,input_pdf,config,progress,performance),capture_regions(translator.region_ledger) if translator.experimental_pipeline else nullcontext():
                     result=translate(config,layout_progress,cancel,lambda:[e.close() for e in active])
+                if cancel():raise InterruptedError('취소됨')
+                if result is None or not result.mono_pdf_path:raise RuntimeError('번역 PDF 생성 결과가 없습니다.')
+                out=Path(state['destination'])/(state['title'][:90]+' - BabelKO '+state['id'][:8]);
+                if out.exists():out=out.with_name(out.name+'-'+uuid.uuid4().hex[:6])
+                out.mkdir()
+                from .figure_legends import export as export_figure_legends
+                with performance.measure('figures.legend'):
+                    figure_report=export_figure_legends(folder,out,input_pdf,translator)
             finally:translator.client.close()
-            if cancel():raise InterruptedError('취소됨')
-            if result is None or not result.mono_pdf_path:raise RuntimeError('번역 PDF 생성 결과가 없습니다.')
             state['status']='validating';progress('원문 대응·한국어 PDF 검사',98)
-            out=Path(state['destination'])/(state['title'][:90]+' - BabelKO '+state['id'][:8]);
-            if out.exists():out=out.with_name(out.name+'-'+uuid.uuid4().hex[:6])
-            out.mkdir()
             from .pdf_preservation import optimize
             with performance.measure('export.optimize'):
                 shutil.copyfile(folder/'Original.pdf',out/'Original.pdf');optimize(result.mono_pdf_path,out/'Korean.pdf')
@@ -254,10 +318,13 @@ def run(folder):
                 checks['status']='failed';checks['issues'].append(dict(code='tracked_translation_missing',detail=tracked))
             if translator.hard_failures:
                 checks['status']='failed';checks['issues'].append(dict(code='translation_failed',count=len(translator.hard_failures)))
+            if figure_report['status']!='passed':
+                checks['status']='failed';checks['issues'].append(dict(code='figure_legend_incomplete',
+                    count=len(figure_report['unresolved_labels'])))
             report=dict(protocol=state['protocol'],ocr_revision=state['ocr_revision'],engine='PDFMathTranslate-next + BabelDOC',upstream=state['upstream'],source_sha256=state['source_sha256'],selected_source_pages=[i+1 for i in state['selected']],
                 translation_tracking=tracked,rendered_prose=rendered,assets=asset_report,ocr_source_pages=[i+1 for i in state.get('ocr_pages',[])],checks=checks,requests=translator.requests,retries=translator.retries,translation_calls=translator.translate_call_count,cache_hits=translator.translate_cache_call_count,
                 unresolved_translation_failures=translator.hard_failures,semantic_accuracy='not_certified',manually_edited_targets=0,seconds=time.perf_counter()-began)
-            report.update(mode=state['mode'],hybrid=getattr(translator,'stats',None))
+            report.update(mode=state['mode'],hybrid=getattr(translator,'stats',None),figures=figure_report)
             if translator.experimental_pipeline:
                 report.update(region_coverage=regions,document_context=translator.document_context.report())
             report['performance']=performance.snapshot()
@@ -269,11 +336,25 @@ def run(folder):
             report['scan_recovery']=dict(revision=SCAN_REVISION,evidence_pages=len(scan_rows),
                 layout=read(folder/'layout-input.json') if input_pdf.name=='Layout-input.pdf' else None,
                 original_input_preserved=True)
-            if state['mode']=='hybrid':report['meaning_assurance']=translator.assurance_summary()
+            if state['mode']=='hybrid':
+                from .hybrid import OUTPUT_POLICY_REVISION
+                report['meaning_assurance']=translator.assurance_summary()
+                report['hybrid_output_policy']=OUTPUT_POLICY_REVISION
+            if state['mode']=='hybrid':
+                from .semantic_guards import REVISION as GUARDS_REVISION
+                from .hybrid import VALIDATION_POLICY_REVISION,auditable_issues,record_errors
+                exceptions=[dict(key=r['key'],issues=r['heuristic_override']['issues']) for r in translator.units.values()
+                    if r.get('heuristic_override') and auditable_issues(r['source'],r.get('final',''),r['label']) and not record_errors(r)]
+                report['translation_guards']=dict(revision=GUARDS_REVISION,
+                    validation_policy=VALIDATION_POLICY_REVISION,
+                    audited_heuristic_exceptions=exceptions,
+                    status='passed' if not translator.hard_failures else 'failed')
             save(out/'Quality.json',report);save(folder/'quality.json',report)
-            state['output_hashes']={name:digest(out/name) for name in ['Original.pdf','Korean.pdf','Bilingual.pdf','Quality.json']}
-            state.update(output=str(out),status='completed' if checks['status']=='passed' else 'failed');progress('저장 완료' if checks['status']=='passed' else '최종 PDF 검사 실패 · 작업 상태 저장됨',100)
-            if checks['status']!='passed':raise RuntimeError('최종 PDF 검사 오류가 남아 자동 완료를 중단했습니다. 작업 상태와 실패 근거를 저장했습니다.')
+            state['output_hashes']={name:digest(out/name) for name in ['Original.pdf','Korean.pdf','Bilingual.pdf','Quality.json','FigureLegends.html','FigureLegends.json']}
+            state.update(output=str(out),status='completed' if checks['status']=='passed' else 'partial')
+            if checks['status']=='passed':state.pop('error',None)
+            else:state['error']=f"PDF는 생성했지만 검증 문제 {len(checks['issues'])}건이 남았습니다. Quality.json에서 위치와 원인을 확인하세요."
+            progress('저장 완료' if checks['status']=='passed' else 'PDF 저장됨 · 검증 문제는 기록됨',100)
     except BaseException as exc:
         state.update(status='cancelled' if (cancel() or isinstance(exc,(InterruptedError,asyncio.CancelledError))) else 'failed',error=str(exc)[:800]);progress('취소됨' if state['status']=='cancelled' else '실패: '+str(exc)[:200])
         raise

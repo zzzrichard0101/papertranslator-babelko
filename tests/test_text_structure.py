@@ -1,5 +1,5 @@
 from types import SimpleNamespace as Obj
-from babelko.text_structure import normalize_input,caption_word_repairs,repair_caption_input
+from babelko.text_structure import normalize_input,caption_word_repairs,cross_boundary_word_repairs,repair_caption_input
 from babelko.hybrid import errors
 from babeldoc.format.pdf.document_il.midend.il_translator import FormulaPlaceholder,RichTextPlaceholder
 
@@ -44,6 +44,27 @@ def test_split_caption_word_uses_repeated_document_vocabulary_only():
     assert repair_caption_input(Obj(unicode=right.unicode),repairs['b']).unicode=='anisotropy disabled and enabled.'
     body.unicode='Gaussian anisotropy'
     assert caption_word_repairs(doc)=={}
+
+
+def test_cross_column_hyphenated_word_is_whole_in_one_model_input():
+    a=Obj(debug_id='left',unicode='The result follows. In sum-',layout_label='plain text')
+    b=Obj(debug_id='right',unicode='mary, the bound decreases.',layout_label='plain text')
+    doc=Obj(page=[Obj(page_number=0,pdf_paragraph=[a,b])])
+    repairs=cross_boundary_word_repairs(doc)
+    left=Obj(unicode="<style id='1'>The result follows. In sum-</style>")
+    right=Obj(unicode="<style id='1'>mary, the bound decreases.</style>")
+    assert repair_caption_input(left,repairs['left']).unicode=="<style id='1'>The result follows. </style>"
+    assert repair_caption_input(right,repairs['right']).unicode=="<style id='1'>In summary, the bound decreases.</style>"
+    assert a.unicode=='The result follows. In sum-' and b.unicode=='mary, the bound decreases.'
+
+
+def test_cross_column_glued_word_is_not_left_as_an_unintelligible_suffix():
+    a=Obj(debug_id='left',unicode='across domainsviacoordinatetransfor-',layout_label='plain text')
+    b=Obj(debug_id='right',unicode='mations orstructural priors.',layout_label='plain text')
+    doc=Obj(page=[Obj(page_number=0,pdf_paragraph=[a,b])])
+    repairs=cross_boundary_word_repairs(doc)
+    assert repair_caption_input(Obj(unicode=a.unicode),repairs['left']).unicode=='across '
+    assert repair_caption_input(Obj(unicode=b.unicode),repairs['right']).unicode=='domainsviacoordinatetransformations orstructural priors.'
 
 
 def test_hyphenated_fallback_lines_merge_without_crossing_columns_or_new_rows():

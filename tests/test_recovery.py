@@ -2,7 +2,7 @@ import json,copy,threading
 from types import SimpleNamespace as NS
 import pytest
 from babelko.scan_evidence import corrections,ordered_rows
-from babelko.recovery import consensus,bound_to_source,ScanRecovery
+from babelko.recovery import consensus,bound_to_source,duplicated_scan_crop,ScanRecovery
 from babelko.assurance import reconsider,tasks,fingerprint,REVISION,accepted
 
 
@@ -41,11 +41,38 @@ def test_recovered_paragraph_edges_accept_scanner_overprints_only_when_both_matc
     assert bound_to_source('ERIC, CINAHL;',"EERRICIC, <style id='4'>C</style>CINIANHIAHL;")=='ERIC, CINAHL;'
 
 
+def test_whole_crop_recovers_overlaid_scan_words_only_with_both_edges():
+    doubled='Sample andd sseelleecctiotino:n: SSiningglleepapratritciciippaanntt ddiaiagngonsoesded with bboorderrdlineerline pperseonraslityonalitydisdoirsdoerrder'
+    clean='Sample and selection: Single participant diagnosed with borderline personality disorder'
+    assert bound_to_source(clean,doubled) is None
+    assert duplicated_scan_crop(clean,doubled)==clean
+    assert duplicated_scan_crop(clean[:-10],doubled) is None
+    assert duplicated_scan_crop(clean.replace('diagnosed with ',''),doubled) is None
+    assert duplicated_scan_crop('Previous paragraph. '+clean,doubled) is None
+
+
 def test_good_source_does_not_trigger_scan_rereading():
     recovery=object.__new__(ScanRecovery);recovery.failed={'A different source.'}
     recovery.observe=lambda _:pytest.fail('unfailed source triggered OCR')
     value=NS(unicode='The source is valid.',placeholders=[])
     assert recovery(value,None,{})==(value,[])
+
+
+def test_local_pixel_read_and_saved_translation_resolve_ocr_ten_to_to():
+    source='They did not have the means 10 control the groups.'
+    row=lambda text:dict(text=text,score=.96,bbox=[0,0,300,12])
+    recovery=object.__new__(ScanRecovery);recovery.failed={source}
+    recovery.drafts={source:'그들은 집단을 통제할 수단이 없었다.'}
+    recovery.lock=threading.RLock()
+    recovery.observe=lambda _:dict(rows=[row('They did not have the means 10 control the groups.')],
+        second_rows=[row('They did not have the means 10 control the groups.')])
+    value=NS(unicode=source,placeholders=[])
+    result,edits=recovery(value,NS(layout_label='plain text'),dict(rows=[row('They did not have the means to control the groups.')]))
+    assert result.unicode=='They did not have the means to control the groups.'
+    assert edits[0]['action']=='pixel_and_draft_confirmed_ocr_confusion'
+    recovery.drafts={source:'그들은 10개 집단을 통제했다.'}
+    value=NS(unicode=source,placeholders=[])
+    assert recovery(value,NS(layout_label='plain text'),dict(rows=[row('They did not have the means to control the groups.')]))[1]==[]
 
 
 def test_failed_scan_recovery_keeps_only_its_paragraph_and_requires_two_readers(monkeypatch):
@@ -68,6 +95,24 @@ def test_failed_scan_recovery_keeps_only_its_paragraph_and_requires_two_readers(
     recovery.observe=lambda _:dict(rows=rows,second_rows=[dict(text='Different unrelated text.',score=.99,bbox=[0,0,100,10])])
     value=NS(unicode=source,placeholders=[Formula(i,c) for i,c in enumerate('raftx',1)])
     assert recovery(value,None,dict(rows=[]))[1]==[]
+
+
+def test_minor_dpi_disagreement_can_use_source_and_independent_read(monkeypatch):
+    import babeldoc.format.pdf.document_il.midend.il_translator as native
+    class Formula:
+        def __init__(self,n,char):
+            self.placeholder='{v'+str(n)+'}'
+            self.formula=NS(pdf_character=[NS(char_unicode=char)])
+    monkeypatch.setattr(native,'FormulaPlaceholder',Formula)
+    source='D{v1}r{v2}a{v3}f{v4}t{v5} writing is a process of thinking through research.'
+    clean='Draft writing is a process of thinking through research.'
+    row=lambda text:dict(text=text,score=.99,bbox=[0,0,100,10])
+    recovery=object.__new__(ScanRecovery);recovery.failed={source};recovery.lock=threading.RLock()
+    recovery.observe=lambda _:dict(rows=[row(clean)],second_rows=[row(clean.replace(' in ',' 1n '))])
+    value=NS(unicode=source,placeholders=[Formula(i,c) for i,c in enumerate('raftx',1)])
+    result,edits=recovery(value,None,dict(rows=[row(clean)]))
+    assert result.unicode==clean and result.placeholders==[]
+    assert edits[0]['action']=='pixel_consensus_fragmented_scan_prose'
 
 
 def test_failed_scan_recovery_never_flattens_math_even_if_ocr_agrees(monkeypatch):

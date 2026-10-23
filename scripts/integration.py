@@ -151,14 +151,11 @@ def main(mode='qwen',experimental=False,diverse=False):
                             placeholder.insert_text((30,40),'Exporter fault: translated prose lost.')
                         blank.save(destination)
                 broken=create(source,p/'test_vault',mode=mode,experimental_pipeline=experimental)
-                try:
-                    with patch('babelko.pdf_preservation.optimize',lost_export):run(broken)
-                except RuntimeError:
-                    failed=read(broken/'state.json');report=read(Path(failed['output'])/'Quality.json')
-                    assert failed['status']=='failed' and report['rendered_prose']['status']=='failed'
-                    assert digest(source)==digest(Path(failed['output'])/'Original.pdf')
-                    loss_rejected=True
-                else:raise AssertionError('Exporter lost translations but worker reported success')
+                with patch('babelko.pdf_preservation.optimize',lost_export):run(broken)
+                failed=read(broken/'state.json');report=read(Path(failed['output'])/'Quality.json')
+                assert failed['status']=='partial' and report['rendered_prose']['status']=='failed'
+                assert digest(source)==digest(Path(failed['output'])/'Original.pdf')
+                loss_rejected=True
                 if experimental:
                     # Keep every word/number but move a short table cell. The
                     # previous prose-only gate cannot detect this spatial fault.
@@ -172,15 +169,13 @@ def main(mode='qwen',experimental=False,diverse=False):
                             pdf[0].insert_text((cell[0]+100,cell[3]-2),'12',fontsize=11)
                             pdf.saveIncr()
                     broken=create(source,p/'test_vault',mode=mode,experimental_pipeline=True)
-                    try:
-                        with patch('babelko.pdf_preservation.optimize',moved_cell):run(broken)
-                    except RuntimeError:
-                        failed=read(broken/'state.json');report=read(Path(failed['output'])/'Quality.json')
-                        assert report['rendered_prose']['status']=='passed'
-                        assert report['region_coverage']['status']=='failed'
-                        assert any('pdf_glyph_missing_or_moved' in v.get('codes',[]) for v in report['region_coverage']['issues'])
-                        cell_move_rejected=True
-                    else:raise AssertionError('Wrong cell placement reported success')
+                    with patch('babelko.pdf_preservation.optimize',moved_cell):run(broken)
+                    failed=read(broken/'state.json');report=read(Path(failed['output'])/'Quality.json')
+                    assert failed['status']=='partial'
+                    assert report['rendered_prose']['status']=='passed'
+                    assert report['region_coverage']['status']=='failed'
+                    assert any('pdf_glyph_missing_or_moved' in v.get('codes',[]) for v in report['region_coverage']['issues'])
+                    cell_move_rejected=True
             save(work/'result.json',dict(status='passed',output=str(out),source_hash_equal=True,ocr_scan_only=True,invalid_candidate_repaired=True,replay_without_calls=True,export_loss_rejected=loss_rejected,cell_move_rejected=cell_move_rejected,local_model_calls=False,
                 native_cache_resume=dict(seconds=round(resume_seconds,3),cache_hit=True,model_requests=0,model_loads=0,text_and_geometry_equal=True,rendered_pixels_equal=True),cold_performance=cold_performance))
             print(json.dumps(read(work/'result.json'),ensure_ascii=False))
