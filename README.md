@@ -139,7 +139,7 @@ OCR을 거친 **색인 페이지**가 확실히 식별되면 한국어 PDF에서
 
 - 설치 다운로드가 끊기면 같은 `setup.ps1` 명령을 다시 실행하세요. 모델 확인은 `.\.venv\Scripts\python.exe scripts\download_models.py --verify-only`로 할 수 있습니다. Qwen만 설치했다면 `--mode qwen`을 추가합니다.
 - `로컬 엔진 시작 실패`가 뜨면 해당 작업 폴더의 `engine-*.log`를 확인하세요. 다른 `llama-server.exe`가 같은 자원을 사용 중인지도 확인합니다.
-- 구현 세부 사항은 [아키텍처](docs/ARCHITECTURE.txt), [성능 점검](docs/PERFORMANCE.txt), [실험 파이프라인](docs/EXPERIMENTAL-PIPELINE.txt), [개발 기록](DEVELOPMENT.txt)에 있습니다. **새 파이프라인 실험**은 결합 모드에서만 선택할 수 있으며 기본 설정은 아닙니다.
+- 구현 세부 사항은 [아키텍처](docs/ARCHITECTURE.txt), [성능 점검](docs/PERFORMANCE.txt), [OCR 입력 검증](docs/OCR-AUDIT.txt), [실험 파이프라인](docs/EXPERIMENTAL-PIPELINE.txt), [개발 기록](DEVELOPMENT.txt)에 있습니다. **새 파이프라인 실험**은 결합 모드에서만 선택할 수 있으며 기본 설정은 아닙니다.
 
 개발 검사는 `uv run pytest -q`, `uv run python scripts/integration.py`, `uv run python scripts/integration.py --mode hybrid`로 실행합니다. 실제 모델 의미 평가와 공개 PDF 코퍼스 도구는 `scripts/evaluate_meaning.py`, `scripts/accuracy_corpus.py`에 있습니다. 실제 논문 원문에 대한 세 방식의 블라인드 비교 절차와 독립 검토의 요건은 [번역 정확도 평가 절차](docs/ACCURACY-EVALUATION.md)를 참고하세요. 개발용 원문·결과는 로컬 `test_vault/`에만 저장합니다.
 

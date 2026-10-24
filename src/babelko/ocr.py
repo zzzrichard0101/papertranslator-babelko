@@ -75,8 +75,14 @@ def prepare(source,destination,mode='auto',progress=print,cancel=lambda:False,se
                     normalized=result.new_page(width=page.rect.width,height=page.rect.height)
                     import numpy as np
                     pixels=np.frombuffer(pix.samples,dtype=np.uint8).reshape(pix.height,pix.width,3).copy()
-                    spans=[s for block in recognized[0].get_text('dict')['blocks'] for line in block.get('lines',[]) for s in line['spans'] if s['text'].strip()]
                     rx=pix.width/recognized[0].rect.width;ry=pix.height/recognized[0].rect.height
+                    raw_lines=[line for block in recognized[0].get_text('dict')['blocks'] for line in block.get('lines',[])]
+                    lines=[]
+                    for line in raw_lines:
+                        kept=[s for s in line['spans'] if s['text'].strip() and
+                              not unsupported_punctuation(s,pixels,rx,ry)]
+                        if kept:lines.append({**line,'spans':kept})
+                    spans=[s for line in lines for s in line['spans']]
                     for span in spans:
                         x0,y0,x1,y1=span['bbox']
                         pixels[max(0,int(y0*ry)-2):min(pix.height,math.ceil(y1*ry)+2),max(0,int(x0*rx)-2):min(pix.width,math.ceil(x1*rx)+2)]=255
@@ -87,7 +93,7 @@ def prepare(source,destination,mode='auto',progress=print,cancel=lambda:False,se
                     # removes English without scan-mask ghosts or glyphless numbers.
                     font=fitz.Font('helv');sx=page.rect.width/recognized[0].rect.width;sy=page.rect.height/recognized[0].rect.height
                     import statistics
-                    lines=[line for block in recognized[0].get_text('dict')['blocks'] for line in block.get('lines',[])]
+                    lines=split_merged_column_lines(lines,recognized[0].rect.width)
                     runs=[]
                     for line in lines:
                         items=sorted([s for s in line['spans'] if s['text'].strip()],key=lambda s:s['bbox'][0])
@@ -150,9 +156,62 @@ def reading_order(runs,width):
     gap=(max(r['bbox'][2] for r in anchors[0])+min(r['bbox'][0] for r in anchors[1]))/2
     wide=[r for r in runs if r['bbox'][0]<gap<r['bbox'][2]]
     boundaries=sorted(r['bbox'][1] for r in wide)
+    paired=[r for group,other in ((anchors[0],anchors[1]),(anchors[1],anchors[0]))
+            for r in group if any(abs(r['bbox'][1]-s['bbox'][1])<=max(12,r['bbox'][3]-r['bbox'][1]) for s in other)]
+    body_bottom=max(r['bbox'][3] for r in paired) if paired else max(r['bbox'][3] for group in anchors for r in group)
+    tail=[r for r in runs if r not in wide and r['bbox'][1]>body_bottom+12]
     def key(run):
         x0,y0,x1,y1=run['bbox']
+        if run in tail:return len(boundaries)*2+2,0,y0,x0
         if run in wide:band=2*sum(y0>y for y in boundaries)+1
         else:band=2*sum(y0>y for y in boundaries)
         return band,0 if run in wide else (1 if (x0+x1)/2<gap else 2),y0,x0
     return sorted(runs,key=key)
+
+
+def split_merged_column_lines(lines,width):
+    """Separate OCR lines that accidentally join the two prose columns.
+
+    Require several independently detected lines in *both* columns first.
+    A full-width heading on a single-column page is left untouched.
+    """
+    left=[];right=[]
+    for line in lines:
+        x0,_,x1,_=line['bbox'];span=x1-x0
+        if not width*.25<span<width*.55:continue
+        if x0<width*.25:left.append(line)
+        elif x0>width*.42:right.append(line)
+    if len(left)<3 or len(right)<3:return lines
+    import statistics
+    gap=(statistics.median(line['bbox'][2] for line in left)+
+         statistics.median(line['bbox'][0] for line in right))/2
+    if not width*.32<gap<width*.68:return lines
+    top=max(min(line['bbox'][1] for line in left),min(line['bbox'][1] for line in right))
+    bottom=min(max(line['bbox'][3] for line in left),max(line['bbox'][3] for line in right))
+    result=[]
+    for line in lines:
+        if not top<=line['bbox'][1]<=bottom or not line['bbox'][0]<gap<line['bbox'][2]:
+            result.append(line);continue
+        sides=[[],[]]
+        for span in line['spans']:
+            x0,_,x1,_=span['bbox']
+            sides[int((x0+x1)/2>=gap)].append(span)
+        if min(sum(bool(re.search(r'[A-Za-z0-9]',s['text'])) for s in side) for side in sides)<3:
+            result.append(line);continue
+        for side in sides:
+            result.append({**line,'spans':side,
+                           'bbox':(min(s['bbox'][0] for s in side),min(s['bbox'][1] for s in side),
+                                   max(s['bbox'][2] for s in side),max(s['bbox'][3] for s in side))})
+    return result
+
+
+def unsupported_punctuation(span,pixels,rx,ry):
+    """Drop isolated punctuation OCR only when its source pixels are blank."""
+    import numpy as np
+    value=span['text'].strip()
+    if len(value)<2 or any(ch.isalnum() for ch in value):return False
+    x0,y0,x1,y1=span['bbox'];height,width=pixels.shape[:2]
+    a=max(0,int(x0*rx)-2);b=min(width,math.ceil(x1*rx)+2)
+    c=max(0,int(y0*ry)-2);d=min(height,math.ceil(y1*ry)+2)
+    if a>=b or c>=d:return False
+    return not np.any(pixels[c:d,a:b].min(axis=2)<180)

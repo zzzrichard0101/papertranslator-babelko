@@ -1,0 +1,160 @@
+{
+  "cases": [
+    {
+      "key": "controlled",
+      "source_name": "controlled-layouts.pdf",
+      "source_sha256": "23e0fa8cbbfc00e646a11f336be305dbed9bbde2b9e9169e5d54056205251b9d",
+      "label_provenance": "Authored control: source paragraph and six placement regions checked against raster page 6.",
+      "pages": [
+        {
+          "page": 6,
+          "regions": [
+            {
+              "label": "title",
+              "bbox": [
+                35,
+                25,
+                380,
+                70
+              ],
+              "text": "Controlled 2 column study"
+            },
+            {
+              "label": "left-1",
+              "bbox": [
+                35,
+                95,
+                290,
+                170
+              ],
+              "text": "The response decreased, but the uncertainty increased. Only participants with dry equipment were included. No causal effect was established; the change may reflect selection."
+            },
+            {
+              "label": "right-1",
+              "bbox": [
+                295,
+                95,
+                560,
+                170
+              ],
+              "text": "The response decreased, but the uncertainty increased. Only participants with dry equipment were included. No causal effect was established; the change may reflect selection."
+            },
+            {
+              "label": "left-2",
+              "bbox": [
+                35,
+                285,
+                290,
+                360
+              ],
+              "text": "The response decreased, but the uncertainty increased. Only participants with dry equipment were included. No causal effect was established; the change may reflect selection."
+            },
+            {
+              "label": "right-2",
+              "bbox": [
+                295,
+                285,
+                560,
+                360
+              ],
+              "text": "The response decreased, but the uncertainty increased. Only participants with dry equipment were included. No causal effect was established; the change may reflect selection."
+            },
+            {
+              "label": "left-3",
+              "bbox": [
+                35,
+                475,
+                290,
+                550
+              ],
+              "text": "The response decreased, but the uncertainty increased. Only participants with dry equipment were included. No causal effect was established; the change may reflect selection."
+            },
+            {
+              "label": "right-3",
+              "bbox": [
+                295,
+                475,
+                560,
+                550
+              ],
+              "text": "The response decreased, but the uncertainty increased. Only participants with dry equipment were included. No causal effect was established; the change may reflect selection."
+            },
+            {
+              "label": "footnote",
+              "bbox": [
+                35,
+                715,
+                330,
+                760
+              ],
+              "text": "Footnote: the estimate is not a guarantee."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "nasa",
+      "source_name": "nasa.pdf",
+      "source_sha256": "fcb1ae7a88e5251559dde0b7d51ec71f06795cf78f64491aa9594fdf9ca89334",
+      "label_provenance": "Manual transcription from visually inspected NASA press-kit page 6 pixels; selected prose regions only.",
+      "pages": [
+        {
+          "page": 6,
+          "regions": [
+            {
+              "label": "intro",
+              "bbox": [
+                90,
+                65,
+                530,
+                95
+              ],
+              "text": "It bears a map of the Earth and this inscription:"
+            },
+            {
+              "label": "inscription",
+              "bbox": [
+                100,
+                100,
+                500,
+                185
+              ],
+              "text": "HERE MEN FROM THE PLANET EARTH FIRST SET FOOT UPON THE MOON JULY 1969 A.D. WE CAME IN PEACE FOR ALL MANKIND"
+            },
+            {
+              "label": "plaque",
+              "bbox": [
+                65,
+                198,
+                525,
+                268
+              ],
+              "text": "The plaque is fastened to the descent stage of the lunar module and thus becomes a permanent artifact on the lunar sur- face."
+            },
+            {
+              "label": "flags",
+              "bbox": [
+                65,
+                335,
+                530,
+                445
+              ],
+              "text": "The Apollo 11 crew will also carry to the Moon and return two large American flags, flags of the 50 states, District of Columbia and U.S. Territories, flags of other nations and that of the United Nations Organization."
+            },
+            {
+              "label": "launch",
+              "bbox": [
+                65,
+                575,
+                530,
+                685
+              ],
+              "text": "Apollo 11 is scheduled for launch at 9:32 a.m. EDT July 16 from the National Aeronautics and Space Administration's Kennedy Space Center Launch Complex 39-A. The mission will be the fifth manned Apollo flight and the third to the Moon."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
