@@ -204,8 +204,10 @@ def summarize(base):
         quality = read(output / 'Quality.json') if output and (output / 'Quality.json').exists() else {}
         performance = read(job / 'performance.json') if job and (job / 'performance.json').exists() else {}
         checks = quality.get('checks', {})
+        status = ('paused' if record.get('status') == 'paused' and state.get('status') == 'cancelled'
+                  else state.get('status', 'queued'))
         rows.append(dict(key=case['key'], field=case['field'], arxiv_id=case['arxiv_id'],
-                         source_pages=case['pages'], status=state.get('status', 'queued'),
+                         source_pages=case['pages'], status=status,
                          current_stage=state.get('stage'), progress=state.get('progress'),
                          attempts=record.get('attempts', 0),
                          elapsed_seconds=performance.get('elapsed_seconds'),
@@ -268,9 +270,10 @@ def finished(report):
 def stop_completed_schedule(base, report):
     if not finished(report) or base.resolve() != DEFAULT_BASE.resolve():
         return
-    command = ("Get-ScheduledTask -TaskName 'PaperTranslator-BabelKO-Diverse30',"
-               "'PaperTranslator-BabelKO-Diverse30-Report' -ErrorAction SilentlyContinue "
-               "| Disable-ScheduledTask | Out-Null")
+    command = ("'PaperTranslator-BabelKO-Diverse30',"
+               "'PaperTranslator-BabelKO-Diverse30-Report' | ForEach-Object "
+               "{ Get-ScheduledTask -TaskName $_ -ErrorAction SilentlyContinue "
+               "| Disable-ScheduledTask | Out-Null }")
     subprocess.run(['powershell', '-NoProfile', '-Command', command], check=True,
                    capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
     print('Benchmark finished; both local scheduled tasks disabled.', flush=True)
