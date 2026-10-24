@@ -84,6 +84,24 @@ def test_exactly_preserved_fallback_pixels_resolve_unreliable_font_coordinates(t
     assert ledger.inspect(output,[0],source)['status']=='failed'
 
 
+def test_restored_index_uses_exact_page_pixels_instead_of_removed_ocr_glyphs(tmp_path):
+    source=tmp_path/'source.pdf';output=tmp_path/'output.pdf'
+    with fitz.open() as pdf:
+        pdf.new_page(width=300,height=400).insert_text((30,50),'Index 10 20')
+        pdf.save(source)
+    output.write_bytes(source.read_bytes())
+    indexed=row('index',1,30,350,'Index')
+    indexed.update(policy='preserved_reference',inputs=[],record_keys=[],target=None)
+    ledger=RegionLedger(tmp_path);ledger.rows=[indexed]
+    report=ledger.inspect(output,[0],source,[1])
+    assert report['status']=='passed' and report['pixel_verified_index_pages']==[1]
+    with fitz.open() as pdf:
+        pdf.new_page(width=300,height=400)
+        pdf.save(output)
+    report=ledger.inspect(output,[0],source,[1])
+    assert report['status']=='failed' and report['issues'][0]['code']=='restored_index_pixels_changed'
+
+
 def test_new_punctuation_drawing_fragment_is_not_unmapped_translation(tmp_path):
     ledger=RegionLedger(tmp_path);ledger.collecting=True
     ledger.pre(NS(debug_id='new',unicode='—'),'.')

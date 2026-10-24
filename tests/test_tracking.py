@@ -171,3 +171,59 @@ def test_completed_job_with_old_render_qa_rechecks_saved_pdf_without_translation
     assert result['status']=='partial'
     assert read(out/'Quality.json')['rendered_prose']['missing_short_fragments']==1
     assert digest(out/'Quality.json')==result['output_hashes']['Quality.json']
+
+
+def test_completed_scanned_index_is_restored_from_saved_export_without_model(tmp_path,monkeypatch):
+    import pymupdf as fitz
+    import babelko.pipeline as pipeline
+    from babelko.assurance import REVISION as ASSURANCE_REVISION
+    from babelko.figure_legends import REVISION as FIGURE_REVISION
+    from babelko.hybrid import OUTPUT_POLICY_REVISION
+    from babelko.policy import PROTOCOL,OCR_REVISION
+    from babelko.references import REVISION as REFERENCES_REVISION
+    from babelko.render_coverage import REVISION as RENDER_REVISION
+    from babelko.scan_evidence import REVISION as SCAN_REVISION
+    from babelko.semantic_guards import REVISION as GUARDS_REVISION
+    from babelko.storage import digest,read
+
+    folder=tmp_path/'jobs'/'job';(folder/'intermediate').mkdir(parents=True)
+    out=tmp_path/'result';out.mkdir();source=folder/'Original.pdf'
+    with fitz.open() as raster:
+        page=raster.new_page(width=300,height=400)
+        page.insert_text((30,50),'Index 10 20')
+        image=page.get_pixmap(alpha=False)
+    with fitz.open() as doc:
+        doc.new_page(width=300,height=400).insert_text((30,50),'Body')
+        page=doc.new_page(width=300,height=400);page.insert_image(page.rect,pixmap=image)
+        doc.save(source)
+    (out/'Original.pdf').write_bytes(source.read_bytes())
+    with fitz.open(source) as doc:
+        doc[1].insert_text((30,100),'OCR overlay')
+        doc.save(out/'Korean.pdf')
+    pipeline.compose(source,out/'Korean.pdf',out/'Bilingual.pdf',[0,1])
+    (out/'FigureLegends.html').write_text('No labels',encoding='utf-8')
+    save(out/'FigureLegends.json',dict(revision=FIGURE_REVISION,status='passed'))
+    save(folder/'intermediate'/'translate_tracking.json',dict(page=[dict(paragraph=[dict(
+        pdf_unicode='Body',input='Body',output='Body')]),dict(paragraph=[])]))
+    sha=digest(source)
+    save(out/'Quality.json',dict(source_sha256=sha,checks=dict(status='passed',issues=[]),
+        translation_tracking=dict(status='passed'),meaning_assurance=dict(revision=ASSURANCE_REVISION,status='passed'),
+        translation_guards=dict(revision=GUARDS_REVISION),references=dict(revision=REFERENCES_REVISION,
+            paragraphs=[dict(source_page=2,reason='index_section')]),
+        figures=dict(revision=FIGURE_REVISION,status='passed'),hybrid_output_policy=OUTPUT_POLICY_REVISION,
+        rendered_prose=dict(revision=RENDER_REVISION),scan_recovery=dict(revision=SCAN_REVISION),
+        unresolved_translation_failures=[]))
+    state=dict(protocol=PROTOCOL,ocr_revision=OCR_REVISION,status='completed',mode='hybrid',
+        source_sha256=sha,selected=[0,1],ocr_pages=[1],snapshot={},output=str(out),
+        output_hashes={name:digest(out/name) for name in
+            ('Original.pdf','Korean.pdf','Bilingual.pdf','Quality.json','FigureLegends.html','FigureLegends.json')})
+    save(folder/'state.json',state)
+    monkeypatch.setattr(pipeline,'root',lambda:tmp_path)
+    monkeypatch.setattr(pipeline,'prepare',lambda:pytest.fail('translation preparation restarted'))
+    monkeypatch.setattr('babelko.validation.inspect_output',lambda *args:dict(status='passed',issues=[],pages=[]))
+    result=pipeline.run(folder)
+    assert result['status']=='completed'
+    assert read(out/'Quality.json')['restored_original_index_pages']==[2]
+    with fitz.open(source) as original,fitz.open(out/'Korean.pdf') as korean:
+        assert korean[1].get_pixmap(alpha=False).samples==original[1].get_pixmap(alpha=False).samples
+    assert digest(out/'Korean.pdf')==result['output_hashes']['Korean.pdf']

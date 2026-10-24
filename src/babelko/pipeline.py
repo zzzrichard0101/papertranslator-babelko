@@ -23,6 +23,22 @@ def selected_pages(spec,count):
     return sorted(chosen)
 
 
+def scanned_index_pages(state,reference_report):
+    """Selected OCR pages whose entire index composition was preserved."""
+    eligible=set(state.get('ocr_pages',[]))&set(state.get('selected',[]))
+    return sorted({row['source_page'] for row in reference_report.get('paragraphs',[])
+        if row.get('reason')=='index_section' and row.get('source_page',0)-1 in eligible})
+
+
+def restore_scanned_index(original,korean,state,reference_report):
+    from .pdf_preservation import restore_original_index
+    pages=scanned_index_pages(state,reference_report)
+    report=dict(paragraphs=[dict(source_page=page,reason='index_section') for page in pages])
+    restored=restore_original_index(original,korean,state['selected'],report)
+    if restored!=pages:raise RuntimeError('스캔 색인 원본 복원 쪽수 불일치')
+    return restored
+
+
 def create(source,destination,pages='',ocr='auto',mode='auto',experimental_pipeline=False):
     from .engine import registry,models
     source=Path(source).resolve();destination=Path(destination).resolve()
@@ -90,8 +106,11 @@ def revalidate_saved_output(folder,state,progress):
     from .render_coverage import REVISION as RENDER_REVISION
     stale_render=(state.get('status')=='completed' and
         quality.get('rendered_prose',{}).get('revision')!=RENDER_REVISION)
-    if state.get('status')=='completed' and not stale_render:return False
-    if stale_render:
+    expected_index=scanned_index_pages(state,quality.get('references',{}))
+    stale_index=(state.get('status')=='completed' and
+        quality.get('restored_original_index_pages',[])!=expected_index)
+    if state.get('status')=='completed' and not (stale_render or stale_index):return False
+    if stale_render or stale_index:
         from .references import REVISION as REFERENCES_REVISION
         if quality.get('references',{}).get('revision')!=REFERENCES_REVISION:return False
         if state.get('mode')=='hybrid':
@@ -118,7 +137,7 @@ def revalidate_saved_output(folder,state,progress):
     if state.get('mode')=='hybrid':
         from .hybrid import OUTPUT_POLICY_REVISION
         if quality.get('hybrid_output_policy')!=OUTPUT_POLICY_REVISION:return False
-    expected_checks='passed' if stale_render else 'failed'
+    expected_checks='passed' if stale_render or stale_index else 'failed'
     if (quality.get('source_sha256')!=state['source_sha256'] or quality.get('checks',{}).get('status')!=expected_checks
             or quality.get('unresolved_translation_failures')
             or quality.get('translation_tracking',{}).get('status')!='passed'
@@ -129,6 +148,12 @@ def revalidate_saved_output(folder,state,progress):
     tracker=folder/'intermediate'/'translate_tracking.json'
     if not tracker.is_file():return False
     state['status']='validating';progress('저장된 PDF 재검증',98)
+    if stale_index:
+        quality['restored_original_index_pages']=restore_scanned_index(folder/'Original.pdf',out/'Korean.pdf',
+            state,quality['references'])
+        compose(folder/'Original.pdf',out/'Korean.pdf',out/'Bilingual.pdf',state['selected'])
+        state['output_hashes']['Korean.pdf']=digest(out/'Korean.pdf')
+        state['output_hashes']['Bilingual.pdf']=digest(out/'Bilingual.pdf')
     extracted=[];checks=inspect_output(out/'Korean.pdf',state['selected'],extracted,folder/'Original.pdf')
     tracked=tracking_status(tracker)
     ledger_path=folder/'region-ledger.json'
@@ -139,7 +164,8 @@ def revalidate_saved_output(folder,state,progress):
         from .region_ledger import RegionLedger,REVISION as REGION_REVISION
         ledger_data=read(folder/'region-ledger.json')
         ledger=RegionLedger(folder);ledger.rows=ledger_data['regions']
-        regions=ledger.inspect(out/'Korean.pdf',state['selected'],folder/'Original.pdf')
+        regions=ledger.inspect(out/'Korean.pdf',state['selected'],folder/'Original.pdf',
+            quality.get('restored_original_index_pages',[]))
         if regions['status']=='passed':
             save(folder/'region-ledger.json',{**ledger_data,'revision':REGION_REVISION,'regions':ledger.rows})
         if regions['status']!='passed':checks['issues'].append(dict(code='spatial_region_missing',detail=regions))
@@ -190,6 +216,9 @@ def run(folder):
             from .scan_evidence import REVISION as SCAN_REVISION,LAYOUT_REVISION
             scan=read(out/'Quality.json').get('scan_recovery',{})
             current=scan.get('revision')==SCAN_REVISION and (not scan.get('layout') or scan['layout'].get('revision')==LAYOUT_REVISION)
+        if current and (out/'Quality.json').is_file():
+            quality=read(out/'Quality.json')
+            current=quality.get('restored_original_index_pages',[])==scanned_index_pages(state,quality.get('references',{}))
         if current and digest(folder/'Original.pdf')==state['source_sha256'] and all((out/name).exists() and digest(out/name)==sha for name,sha in state['output_hashes'].items()):return state
     began=time.perf_counter();lock=root()/'worker.lock'
     try:lock_file=lock.open('x')
@@ -371,6 +400,9 @@ def run(folder):
                     for i,source_page in enumerate(state['selected']):
                         if source_page in restore:translated[i].set_rotation(restore[source_page])
                     translated.saveIncr()
+            reference_report=read(folder/'reference-preservation.json')
+            with performance.measure('export.index_restore'):
+                restored_index_pages=restore_scanned_index(folder/'Original.pdf',out/'Korean.pdf',state,reference_report)
             with performance.measure('export.bilingual'):compose(folder/'Original.pdf',out/'Korean.pdf',out/'Bilingual.pdf',state['selected'])
             from .validation import inspect_output,tracking_status
             from .render_coverage import inspect as inspect_rendered
@@ -380,7 +412,8 @@ def run(folder):
                 ledger_path=folder/'region-ledger.json'
                 rendered=inspect_rendered(out/'Korean.pdf',config.working_dir/'translate_tracking.json',extracted_pages,
                     folder/'Original.pdf',ledger_path if ledger_path.is_file() else None,state['selected'])
-                regions=translator.region_ledger.inspect(out/'Korean.pdf',state['selected'],folder/'Original.pdf') if translator.experimental_pipeline else None
+                regions=translator.region_ledger.inspect(out/'Korean.pdf',state['selected'],folder/'Original.pdf',
+                    restored_index_pages) if translator.experimental_pipeline else None
             if regions and regions['status']!='passed':
                 checks['status']='failed';checks['issues'].append(dict(code='spatial_region_missing',detail=regions))
             if rendered['status']!='passed':
@@ -406,7 +439,8 @@ def run(folder):
                 report.update(region_coverage=regions,document_context=translator.document_context.report())
             report['performance']=performance.snapshot()
             report['layout_cache']=read(folder/'layout-cache-report.json') if (folder/'layout-cache-report.json').is_file() else {}
-            report['references']=read(folder/'reference-preservation.json')
+            report['references']=reference_report
+            report['restored_original_index_pages']=restored_index_pages
             report['rotation_normalized_source_pages']=[i+1 for i in state.get('rotated_source_pages',[])]
             report['input_transformations']=state.get('input_transformations',{})
             from .scan_evidence import REVISION as SCAN_REVISION

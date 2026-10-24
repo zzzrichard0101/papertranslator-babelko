@@ -170,7 +170,7 @@ class RegionLedger:
                 row['glyphs']=[dict(text=c.char_unicode,box=box(c.box)) for c in characters(paragraph.pdf_paragraph_composition)]
         save(self.folder/'region-ledger.json',dict(revision=REVISION,source_sha256=self.source_sha256,regions=self.rows,unmapped=self.unknown))
 
-    def inspect(self,path,selected,source_path=None):
+    def inspect(self,path,selected,source_path=None,restored_index_pages=None):
         issues=[];checked=0;glyph_count=0
         if self.unknown:issues.append(dict(code='unmapped_translation',count=len(self.unknown)))
         page_map={source+1:target for target,source in enumerate(selected)}
@@ -198,9 +198,20 @@ class RegionLedger:
                 pools.append(pool);raw_pools.append(raw_pool)
             source_pdf=fitz.open(source_path) if source_path is not None else None
             try:
+              verified_index=set()
+              for source_page in sorted(set(restored_index_pages or [])):
+                target_page=page_map.get(source_page)
+                if target_page is None:continue
+                if (source_pdf is not None and
+                    source_pdf[source_page-1].get_pixmap(alpha=False).samples==pdf[target_page].get_pixmap(alpha=False).samples):
+                    verified_index.add(source_page)
+                else:issues.append(dict(source_page=source_page,code='restored_index_pixels_changed'))
               for row in self.rows:
                 page_index=page_map.get(row['source_page'])
                 if page_index is None:continue
+                if row['source_page'] in verified_index:
+                    checked+=1
+                    continue
                 source_page=source_pdf[row['source_page']-1] if source_pdf is not None else pdf[page_index]
                 if not visible_in_crop(row['source_box'],source_page):continue
                 self.relink_saved_row(row)
@@ -270,8 +281,9 @@ class RegionLedger:
             finally:
                 if source_pdf is not None:source_pdf.close()
         report=dict(revision=REVISION,status='failed' if issues else 'passed',checked_regions=checked,
-            preserved_references=sum(r['policy']=='preserved_reference' for r in self.rows),issues=issues,
-            scope='Analyzed source occurrences, replay, typeset text counts and per-glyph PDF positions. Not OCR recall, reading order or semantic certification.')
+            preserved_references=sum(r['policy']=='preserved_reference' for r in self.rows),
+            pixel_verified_index_pages=sorted(verified_index),issues=issues,
+            scope='Analyzed source occurrences, replay, typeset text counts and per-glyph PDF positions; restored index pages require exact source pixels. Not OCR recall, reading order or semantic certification.')
         save(self.folder/'region-coverage.json',report);return report
 
 

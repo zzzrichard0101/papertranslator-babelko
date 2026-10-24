@@ -46,6 +46,15 @@ def main(mode='qwen',experimental=False,diverse=False):
             rotated=doc.new_page(width=600,height=800)
             rotated.insert_textbox(fitz.Rect(50,110,540,240),'Research evidence does not replace clinical judgement. The study included 24 participants.',fontsize=11)
             rotated.set_rotation(90)
+            with fitz.open() as index_source:
+                index=index_source.new_page(width=600,height=800)
+                index.insert_text((45,55),'Index',fontsize=20)
+                for n in range(48):
+                    x=45+(n//24)*270;y=85+(n%24)*28
+                    index.insert_text((x,y),f'Topic {n+1}  {n+20}',fontsize=10)
+                index_scan=index.get_pixmap(matrix=fitz.Matrix(2,2),alpha=False)
+            raster_index=doc.new_page(width=600,height=800)
+            raster_index.insert_image(raster_index.rect,pixmap=index_scan)
         doc.save(source)
     source_sha=digest(source);calls=[];bad=[False];repair_faults=[0]
     class Server(BaseHTTPRequestHandler):
@@ -95,7 +104,7 @@ def main(mode='qwen',experimental=False,diverse=False):
             if experimental:
                 assert quality['region_coverage']['status']=='passed' and quality['region_coverage']['checked_regions']>10
                 assert 'EBP' in quality['document_context']['entries']
-            assert quality['ocr_source_pages']==[2]
+            assert quality['ocr_source_pages']==([2,6] if diverse else [2])
             assert quality['references']['policy']=='original' and len(quality['references']['paragraphs'])>=2
             if mode=='qwen':assert quality['retries']>=1
             else:
@@ -120,7 +129,7 @@ def main(mode='qwen',experimental=False,diverse=False):
                 assert [p.get_text('words') for p in reread]==before_words
                 assert [p.get_pixmap(alpha=False).samples for p in reread]==before_pixels
             with fitz.open(out/'Korean.pdf') as ko,fitz.open(out/'Bilingual.pdf') as dual:
-                assert len(ko)==len(dual)==(5 if diverse else 3) and all(any('가'<=c<='힣' for c in page.get_text()) for page in list(ko)[:2])
+                assert len(ko)==len(dual)==(6 if diverse else 3) and all(any('가'<=c<='힣' for c in page.get_text()) for page in list(ko)[:2])
                 if diverse:assert ko[4].rotation==90 and ko[3].rect.width==800
                 for page in list(ko)[:2]:
                     assert all(term in page.get_text() for term in ['집단','대조군','치료군']) and 'Hello' not in page.get_text()
@@ -130,6 +139,11 @@ def main(mode='qwen',experimental=False,diverse=False):
                     expected=original[2].get_text('words');actual=ko[2].get_text('words')
                     assert [w[4] for w in expected]==[w[4] for w in actual]
                     assert max(abs(a[n]-b[n]) for a,b in zip(expected,actual) for n in range(4))<.01
+                    if diverse:
+                        assert quality['restored_original_index_pages']==[6],quality['references']
+                        assert ko[5].get_pixmap(alpha=False).samples==original[5].get_pixmap(alpha=False).samples
+                        right=fitz.Rect(original[5].rect.width,0,original[5].rect.width*2,original[5].rect.height)
+                        assert dual[5].get_pixmap(clip=right,alpha=False).samples==original[5].get_pixmap(alpha=False).samples
             assert all('A study of art.' not in m['content'] and 'Clinical evidence.' not in m['content'] for call in calls for m in call['messages'])
             source_batches=[json.loads(m['content'].rsplit('## Here is the input:',1)[1]) for call in calls for m in call['messages'] if '## Here is the input:' in m['content']]
             body_inputs=[item['input'] for batch in source_batches for item in batch if 'Research evidence' in item['input']]
