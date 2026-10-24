@@ -244,10 +244,10 @@ def summarize(base):
                                         for i, v in enumerate(values)) + '</tr>')
     page = '''<!doctype html><html lang="ko"><meta charset="utf-8"><meta http-equiv="refresh" content="120">
 <title>BabelKO 30편 평가</title><style>
-body{font:15px/1.6 system-ui,sans-serif;max-width:1300px;margin:40px auto;padding:0 22px;color:#243347;background:#f7f9fc}
-h1{font-size:30px;margin-bottom:6px}.summary{font-size:18px;margin:0 0 24px}
-table{border-collapse:collapse;width:100%;background:white}th,td{padding:9px 12px;text-align:left;border-bottom:1px solid #e3e9ef}
-th{background:#eaf1f5;position:sticky;top:0}tr:hover{background:#f2f8fa}.note{color:#5c6977}
+body{{font:15px/1.6 system-ui,sans-serif;max-width:1300px;margin:40px auto;padding:0 22px;color:#243347;background:#f7f9fc}}
+h1{{font-size:30px;margin-bottom:6px}}.summary{{font-size:18px;margin:0 0 24px}}
+table{{border-collapse:collapse;width:100%;background:white}}th,td{{padding:9px 12px;text-align:left;border-bottom:1px solid #e3e9ef}}
+th{{background:#eaf1f5;position:sticky;top:0}}tr:hover{{background:#f2f8fa}}.note{{color:#5c6977}}
 </style><h1>다양한 분야 논문 30편 평가</h1>
 <p class="summary">완료 <b>{completed}/30</b> · QA 통과 <b>{qa_passed}</b> · 일부 완료 <b>{partial}</b> · 실패 <b>{failed}</b> · 검증된 쪽 <b>{pages}</b></p>
 <p class="note">로컬 모델로 순차 처리합니다. 이 페이지는 2분마다 새로고침됩니다. QA는 누락·배치 등의 자동 점검이며 번역 의미의 완전성을 보증하지 않습니다.</p>
