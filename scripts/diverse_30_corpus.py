@@ -7,6 +7,7 @@ independent translation accuracy.
 """
 import argparse
 import datetime as dt
+import html
 import json
 import os
 import re
@@ -205,7 +206,8 @@ def summarize(base):
         checks = quality.get('checks', {})
         rows.append(dict(key=case['key'], field=case['field'], arxiv_id=case['arxiv_id'],
                          source_pages=case['pages'], status=state.get('status', 'queued'),
-                         current_stage=state.get('stage'), attempts=record.get('attempts', 0),
+                         current_stage=state.get('stage'), progress=state.get('progress'),
+                         attempts=record.get('attempts', 0),
                          elapsed_seconds=performance.get('elapsed_seconds'),
                          seconds_per_page=(round(performance['elapsed_seconds'] / case['pages'], 2)
                                            if performance.get('elapsed_seconds') else None),
@@ -230,6 +232,29 @@ def summarize(base):
                   summed_worker_seconds=round(seconds, 2), rows=rows,
                   limitation='Mechanical coverage/layout checks only; no independent reference translation or semantic certification.')
     save(base / 'report.json', report)
+    cells = []
+    for row in rows:
+        link = (f'<a href="{html.escape((Path(row["output"]) / "Bilingual.pdf").as_uri(), quote=True)}">결과 PDF</a>'
+                if row['output'] and (Path(row['output']) / 'Bilingual.pdf').exists() else '')
+        values = [row['field'].replace('_', ' '), row['arxiv_id'],
+                  f'{row["status"]} {round(row["progress"] or 0)}%',
+                  str(row['source_pages']), str(row['elapsed_seconds'] or '—'),
+                  str(row['checks'] or '—'), ', '.join(row['issue_codes']), link]
+        cells.append('<tr>' + ''.join(f'<td>{v if i == 7 else html.escape(v)}</td>'
+                                        for i, v in enumerate(values)) + '</tr>')
+    page = '''<!doctype html><html lang="ko"><meta charset="utf-8"><meta http-equiv="refresh" content="120">
+<title>BabelKO 30편 평가</title><style>
+body{font:15px/1.6 system-ui,sans-serif;max-width:1300px;margin:40px auto;padding:0 22px;color:#243347;background:#f7f9fc}
+h1{font-size:30px;margin-bottom:6px}.summary{font-size:18px;margin:0 0 24px}
+table{border-collapse:collapse;width:100%;background:white}th,td{padding:9px 12px;text-align:left;border-bottom:1px solid #e3e9ef}
+th{background:#eaf1f5;position:sticky;top:0}tr:hover{background:#f2f8fa}.note{color:#5c6977}
+</style><h1>다양한 분야 논문 30편 평가</h1>
+<p class="summary">완료 <b>{completed}/30</b> · QA 통과 <b>{qa_passed}</b> · 일부 완료 <b>{partial}</b> · 실패 <b>{failed}</b> · 검증된 쪽 <b>{pages}</b></p>
+<p class="note">로컬 모델로 순차 처리합니다. 이 페이지는 2분마다 새로고침됩니다. QA는 누락·배치 등의 자동 점검이며 번역 의미의 완전성을 보증하지 않습니다.</p>
+<table><thead><tr><th>분야</th><th>논문 ID</th><th>진행</th><th>쪽</th><th>초</th><th>QA</th><th>문제 코드</th><th>파일</th></tr></thead><tbody>{rows}</tbody></table></html>'''.format(
+        completed=report['completed'], qa_passed=report['qa_passed'], partial=report['partial'],
+        failed=report['failed'], pages=report['checked_pages'], rows=''.join(cells))
+    (base / 'Report.html').write_text(page, encoding='utf-8')
     return report
 
 
