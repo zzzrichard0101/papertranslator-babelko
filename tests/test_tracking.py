@@ -70,11 +70,13 @@ def test_old_semantic_certificate_cannot_reuse_completed_job(tmp_path,monkeypatc
     from babelko.policy import PROTOCOL,OCR_REVISION
     folder=tmp_path/'jobs'/'job';folder.mkdir(parents=True)
     out=tmp_path/'result';out.mkdir();(folder/'Original.pdf').write_bytes(b'synthetic source')
+    (out/'FigureLegends.html').write_text('No figures',encoding='utf-8')
     def state(revision):
         from babelko.references import REVISION as REFERENCES_REVISION
         from babelko.semantic_guards import REVISION as GUARDS_REVISION
         from babelko.figure_legends import REVISION as FIGURE_REVISION
         from babelko.render_coverage import REVISION as RENDER_REVISION
+        save(out/'FigureLegends.json',dict(revision=FIGURE_REVISION,status='passed'))
         save(out/'Quality.json',dict(meaning_assurance=dict(revision=revision),references=dict(revision=REFERENCES_REVISION),
             translation_guards=dict(revision=GUARDS_REVISION),figures=dict(revision=FIGURE_REVISION,status='passed'),
             rendered_prose=dict(revision=RENDER_REVISION)))
@@ -108,10 +110,12 @@ def test_experimental_completed_job_requires_current_spatial_and_context_evidenc
     from babelko.storage import digest
     folder=tmp_path/'jobs'/'job';folder.mkdir(parents=True)
     out=tmp_path/'result';out.mkdir();(folder/'Original.pdf').write_bytes(b'synthetic source')
+    (out/'FigureLegends.html').write_text('No figures',encoding='utf-8')
     monkeypatch.setattr(pipeline,'root',lambda:tmp_path);monkeypatch.setattr(pipeline,'prepare',lambda:None)
     def stop(*_):raise RuntimeError('updated spatial processing')
     monkeypatch.setattr(pipeline,'assets',stop)
     for region_revision,context_revision,region_status in [(REGIONS,CONTEXT,'passed'),('old',CONTEXT,'passed'),(REGIONS,'old','passed'),(REGIONS,CONTEXT,'failed')]:
+        save(out/'FigureLegends.json',dict(revision=FIGURES,status='passed'))
         save(out/'Quality.json',dict(meaning_assurance=dict(revision=REVISION),references=dict(revision=REFERENCES),
             translation_guards=dict(revision=GUARDS),figures=dict(revision=FIGURES,status='passed'),
             rendered_prose=dict(revision=RENDER),region_coverage=dict(revision=region_revision,status=region_status),
@@ -227,3 +231,54 @@ def test_completed_scanned_index_is_restored_from_saved_export_without_model(tmp
     with fitz.open(source) as original,fitz.open(out/'Korean.pdf') as korean:
         assert korean[1].get_pixmap(alpha=False).samples==original[1].get_pixmap(alpha=False).samples
     assert digest(out/'Korean.pdf')==result['output_hashes']['Korean.pdf']
+
+
+def test_completed_legacy_figure_image_is_rebuilt_without_model(tmp_path,monkeypatch):
+    import pymupdf as fitz
+    import babelko.pipeline as pipeline
+    from babelko.figure_legends import REVISION as FIGURE_REVISION,image_manifest_valid
+    from babelko.policy import PROTOCOL,OCR_REVISION
+    from babelko.references import REVISION as REFERENCES_REVISION
+    from babelko.render_coverage import REVISION as RENDER_REVISION
+    from babelko.storage import digest,read
+
+    folder=tmp_path/'jobs'/'job';(folder/'intermediate').mkdir(parents=True)
+    out=tmp_path/'result';out.mkdir();source=folder/'Original.pdf'
+    with fitz.open() as pdf:
+        pdf.new_page(width=300,height=400).insert_text((30,50),'Control group')
+        pdf.save(source)
+    (out/'Original.pdf').write_bytes(source.read_bytes())
+    (out/'Korean.pdf').write_bytes(source.read_bytes())
+    pipeline.compose(source,out/'Korean.pdf',out/'Bilingual.pdf',[0])
+    save(folder/'figure-preservation.json',dict(revision=FIGURE_REVISION,figures=[dict(
+        source_page=1,figure_index=1,source_box=[20,320,200,380],
+        labels=[dict(source='Control group',explanatory=True)])],protected_paragraphs=1))
+    name='FigureImages/page-1-figure-1.png'
+    (out/'FigureLegends.html').write_text(f'<img src="{name}">',encoding='utf-8')
+    figures=dict(revision=FIGURE_REVISION,status='passed',rendered_figures=1)
+    save(out/'FigureLegends.json',figures)
+    save(folder/'intermediate'/'translate_tracking.json',dict(page=[dict(paragraph=[dict(
+        pdf_unicode='Control group',input='Control group',output='Control group')])]))
+    sha=digest(source)
+    save(out/'Quality.json',dict(source_sha256=sha,checks=dict(status='passed',issues=[]),
+        translation_tracking=dict(status='passed'),references=dict(revision=REFERENCES_REVISION),
+        figures=figures,rendered_prose=dict(revision=RENDER_REVISION),unresolved_translation_failures=[]))
+    state=dict(protocol=PROTOCOL,ocr_revision=OCR_REVISION,status='completed',mode='qwen',
+        source_sha256=sha,selected=[0],snapshot={},output=str(out),
+        output_hashes={key:digest(out/key) for key in
+            ('Original.pdf','Korean.pdf','Bilingual.pdf','Quality.json','FigureLegends.html','FigureLegends.json')})
+    save(folder/'state.json',state)
+    monkeypatch.setattr(pipeline,'root',lambda:tmp_path)
+    monkeypatch.setattr(pipeline,'prepare',lambda:pytest.fail('translation preparation restarted'))
+    monkeypatch.setattr('babelko.validation.inspect_output',lambda *args:dict(status='passed',issues=[],pages=[]))
+    result=pipeline.run(folder)
+    updated=read(out/'Quality.json')
+    assert result['status']=='completed' and (out/name).is_file()
+    assert image_manifest_valid(out,updated['figures'],result['output_hashes'])
+    assert result['output_hashes'][name]==digest(out/name)
+    for damage in ('changed','deleted'):
+        if damage=='changed':(out/name).write_bytes(b'damaged image')
+        else:(out/name).unlink()
+        repaired=pipeline.run(folder)
+        assert repaired['status']=='completed'
+        assert image_manifest_valid(out,read(out/'Quality.json')['figures'],repaired['output_hashes'])

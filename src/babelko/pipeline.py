@@ -109,8 +109,11 @@ def revalidate_saved_output(folder,state,progress):
     expected_index=scanned_index_pages(state,quality.get('references',{}))
     stale_index=(state.get('status')=='completed' and
         quality.get('restored_original_index_pages',[])!=expected_index)
-    if state.get('status')=='completed' and not (stale_render or stale_index):return False
-    if stale_render or stale_index:
+    from .figure_legends import image_manifest_valid
+    stale_images=not image_manifest_valid(out,quality.get('figures',{}),state['output_hashes'])
+    refresh_completed=state.get('status')=='completed' and (stale_render or stale_index or stale_images)
+    if state.get('status')=='completed' and not refresh_completed:return False
+    if refresh_completed:
         from .references import REVISION as REFERENCES_REVISION
         if quality.get('references',{}).get('revision')!=REFERENCES_REVISION:return False
         if state.get('mode')=='hybrid':
@@ -137,7 +140,7 @@ def revalidate_saved_output(folder,state,progress):
     if state.get('mode')=='hybrid':
         from .hybrid import OUTPUT_POLICY_REVISION
         if quality.get('hybrid_output_policy')!=OUTPUT_POLICY_REVISION:return False
-    expected_checks='passed' if stale_render or stale_index else 'failed'
+    expected_checks='passed' if refresh_completed else 'failed'
     if (quality.get('source_sha256')!=state['source_sha256'] or quality.get('checks',{}).get('status')!=expected_checks
             or quality.get('unresolved_translation_failures')
             or quality.get('translation_tracking',{}).get('status')!='passed'
@@ -147,6 +150,16 @@ def revalidate_saved_output(folder,state,progress):
     from .render_coverage import inspect as inspect_rendered
     tracker=folder/'intermediate'/'translate_tracking.json'
     if not tracker.is_file():return False
+    if stale_images:
+        if not (folder/'figure-preservation.json').is_file():return False
+        from .figure_legends import rebuild_images
+        try:figures=rebuild_images(folder,out,folder/'Original.pdf',read(out/'FigureLegends.json'))
+        except (ValueError,KeyError,IndexError,OSError):return False
+        save(out/'FigureLegends.json',figures);quality['figures']=figures
+        for name in list(state['output_hashes']):
+            if name.startswith('FigureImages/'):state['output_hashes'].pop(name)
+        state['output_hashes'].update(figures['image_hashes'])
+        state['output_hashes']['FigureLegends.json']=digest(out/'FigureLegends.json')
     state['status']='validating';progress('저장된 PDF 재검증',98)
     if stale_index:
         quality['restored_original_index_pages']=restore_scanned_index(folder/'Original.pdf',out/'Korean.pdf',
@@ -219,6 +232,9 @@ def run(folder):
         if current and (out/'Quality.json').is_file():
             quality=read(out/'Quality.json')
             current=quality.get('restored_original_index_pages',[])==scanned_index_pages(state,quality.get('references',{}))
+        if current and (out/'Quality.json').is_file():
+            from .figure_legends import image_manifest_valid
+            current=image_manifest_valid(out,read(out/'Quality.json').get('figures',{}),state['output_hashes'],verify_files=False)
         if current and digest(folder/'Original.pdf')==state['source_sha256'] and all((out/name).exists() and digest(out/name)==sha for name,sha in state['output_hashes'].items()):return state
     began=time.perf_counter();lock=root()/'worker.lock'
     try:lock_file=lock.open('x')
@@ -462,6 +478,7 @@ def run(folder):
                     status='passed' if not translator.hard_failures else 'failed')
             save(out/'Quality.json',report);save(folder/'quality.json',report)
             state['output_hashes']={name:digest(out/name) for name in ['Original.pdf','Korean.pdf','Bilingual.pdf','Quality.json','FigureLegends.html','FigureLegends.json']}
+            state['output_hashes'].update(figure_report['image_hashes'])
             state.update(output=str(out),status='completed' if checks['status']=='passed' else 'partial')
             if checks['status']=='passed':state.pop('error',None)
             else:state['error']=f"PDF는 생성했지만 검증 문제 {len(checks['issues'])}건이 남았습니다. Quality.json에서 위치와 원인을 확인하세요."

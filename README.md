@@ -69,6 +69,7 @@ New-Item -ItemType Directory -Force results | Out-Null
 | `Quality.json` | 자동 검사 결과, 처리 범위, 미해결 문제와 처리 기록 |
 | `FigureLegends.html` | 인식된 그림과 그 아래에 배치한 한국어 범례 |
 | `FigureLegends.json` | 그림 범례의 처리·실패 기록. 그림이 없어도 생성 |
+| `FigureImages/` | 범례 HTML에 표시되는 원본 그림 PNG. 생성된 각 파일의 해시를 검사하며 손상 시 원본 PDF에서 다시 만듦 |
 
 품질 검사를 통과하지 못한 경우에도 읽어 볼 PDF가 만들어질 수 있습니다. 앱이 **부분 완료(`partial`)**로 표시하면 `Quality.json`에서 문제를 확인하세요. `partial`은 번역 완료나 의미 정확성 인증이 아닙니다. 취소하거나 실패한 작업은 앱의 **이 작업 다시 시작**으로 저장된 번역을 재사용할 수 있지만, 분석과 조판 일부는 다시 실행될 수 있습니다.
 

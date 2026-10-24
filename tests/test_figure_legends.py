@@ -3,8 +3,8 @@ from types import SimpleNamespace as NS
 
 import pymupdf as fitz
 
-from babelko.figure_legends import explanatory_label,export,preserve,select
-from babelko.storage import save
+from babelko.figure_legends import REVISION,explanatory_label,export,preserve,select,image_manifest_valid,rebuild_images
+from babelko.storage import save,digest
 
 
 def box(x,y,x2,y2):
@@ -60,7 +60,7 @@ def test_legend_export_uses_local_model_only_for_meaningful_labels(tmp_path):
         page.insert_text((120,150),'Control group')
         page.insert_text((120,175),'25')
         pdf.save(original)
-    save(tmp_path/'figure-preservation.json',dict(figures=[dict(source_page=1,figure_index=1,
+    save(tmp_path/'figure-preservation.json',dict(revision=REVISION,figures=[dict(source_page=1,figure_index=1,
         source_box=[100,200,300,300],labels=[dict(source='Control group',explanatory=True),
             dict(source='25',explanatory=False)])],protected_paragraphs=2))
     class Translator:
@@ -75,6 +75,16 @@ def test_legend_export_uses_local_model_only_for_meaningful_labels(tmp_path):
     assert (out/'FigureImages/page-1-figure-1.png').is_file()
     assert '대조군' in (out/'FigureLegends.html').read_text(encoding='utf-8')
     assert report['translations']==[dict(source='Control group',target='대조군')]
+    name='FigureImages/page-1-figure-1.png'
+    assert report['image_hashes']=={name:digest(out/name)}
+    assert image_manifest_valid(out,report,{name:report['image_hashes'][name]})
+    (out/name).write_bytes(b'damaged image')
+    assert not image_manifest_valid(out,report,{name:report['image_hashes'][name]})
+    restored=rebuild_images(tmp_path,out,original,report)
+    assert restored['image_hashes']==report['image_hashes']
+    assert image_manifest_valid(out,restored,{name:restored['image_hashes'][name]})
+    (out/name).unlink()
+    assert not image_manifest_valid(out,restored,{name:restored['image_hashes'][name]})
 
 
 def test_invalid_legend_response_reports_incomplete_without_inventing_text(tmp_path):

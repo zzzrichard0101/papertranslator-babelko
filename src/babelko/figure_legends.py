@@ -11,10 +11,11 @@ from unittest.mock import patch
 
 import pymupdf as fitz
 
-from .storage import read,save
+from .storage import read,save,digest
 from .translator import validate_items
 
 REVISION='preserved-figure-local-legend-1'
+IMAGE_PATH=re.compile(r'^FigureImages/page-\d+-figure-\d+\.png$')
 CAPTIONS={'figure_caption','figure_title','chart_title','caption','caption_hybrid'}
 FIGURES={'figure'}
 
@@ -135,7 +136,7 @@ def export(folder,output,original,translator):
     """Create an optional, inspectable figure-and-legend companion HTML."""
     data=read(Path(folder)/'figure-preservation.json')
     figures=data['figures'];translations,errors=translate_labels(figures,translator)
-    output=Path(output);images=output/'FigureImages';cards=[];rendered=0
+    output=Path(output);images=output/'FigureImages';cards=[];rendered=0;image_hashes={}
     with fitz.open(original) as pdf:
         for fig in figures:
             labels=[label for label in fig['labels'] if label['explanatory']]
@@ -146,7 +147,9 @@ def export(folder,output,original,translator):
             if rect.is_empty:continue
             images.mkdir(exist_ok=True)
             name=f"page-{fig['source_page']}-figure-{fig['figure_index']}.png"
-            page.get_pixmap(matrix=fitz.Matrix(1.5,1.5),clip=rect,alpha=False).save(images/name)
+            image=images/name
+            page.get_pixmap(matrix=fitz.Matrix(1.5,1.5),clip=rect,alpha=False).save(image)
+            image_hashes[f'FigureImages/{name}']=digest(image)
             rendered+=1
             rows=''.join('<tr><th>'+html.escape(label['source'])+'</th><td>'+html.escape(
                 translations.get(label['source'],'원문 유지 · 번역 미완료'))+'</td></tr>' for label in labels)
@@ -166,6 +169,55 @@ def export(folder,output,original,translator):
         explanatory_labels=len(translations)+len(errors),translated_labels=len(translations),
         translations=[dict(source=source,target=target) for source,target in translations.items()],
         unresolved_labels=[dict(source=s,error=e) for s,e in errors.items()],rendered_figures=rendered,
+        image_hashes=image_hashes,
         status='partial' if errors else 'passed')
     save(output/'FigureLegends.json',report)
     return report
+
+
+def image_manifest_valid(output,report,output_hashes,verify_files=True):
+    """Check every HTML figure against both its report and job hash record."""
+    output=Path(output);manifest=report.get('image_hashes',{})
+    if not isinstance(manifest,dict) or len(manifest)!=report.get('rendered_figures',0):return False
+    if any(not IMAGE_PATH.fullmatch(name) or not isinstance(sha,str) or not re.fullmatch(r'[0-9a-f]{64}',sha)
+            for name,sha in manifest.items()):return False
+    if {name for name in output_hashes if name.startswith('FigureImages/')}!=set(manifest):return False
+    try:
+        saved=read(output/'FigureLegends.json')
+        if (saved.get('revision')!=report.get('revision') or
+            saved.get('rendered_figures',0)!=report.get('rendered_figures',0) or
+            saved.get('image_hashes',{})!=manifest):return False
+        html_text=(output/'FigureLegends.html').read_text(encoding='utf-8')
+        refs=re.findall(r'<img src="(FigureImages/[^"]+)"',html_text)
+        if len(refs)!=len(manifest) or set(refs)!=set(manifest):return False
+        return all(output_hashes.get(name)==sha and (not verify_files or
+            ((output/name).is_file() and digest(output/name)==sha))
+            for name,sha in manifest.items())
+    except (OSError,ValueError):return False
+
+
+def rebuild_images(folder,output,original,report):
+    """Recreate legacy or damaged legend PNGs from the saved original PDF."""
+    output=Path(output);data=read(Path(folder)/'figure-preservation.json')
+    if data.get('revision')!=REVISION or report.get('revision')!=REVISION:raise ValueError('그림 범례 자료 버전 불일치')
+    specs=[]
+    with fitz.open(original) as pdf:
+        for fig in data['figures']:
+            if not any(label['explanatory'] for label in fig['labels']):continue
+            page=pdf[fig['source_page']-1];height=page.mediabox.height
+            x0,y0,x1,y1=fig['source_box']
+            rect=fitz.Rect(x0,height-y1,x1,height-y0)&page.rect
+            if rect.is_empty:continue
+            name=f"FigureImages/page-{fig['source_page']}-figure-{fig['figure_index']}.png"
+            if not IMAGE_PATH.fullmatch(name):raise ValueError('그림 이미지 경로 오류')
+            specs.append((fig['source_page']-1,rect,name))
+        refs=re.findall(r'<img src="(FigureImages/[^"]+)"',
+            (output/'FigureLegends.html').read_text(encoding='utf-8'))
+        if (len(specs)!=report.get('rendered_figures') or len(refs)!=len(specs) or
+                set(refs)!={name for _,_,name in specs}):raise ValueError('그림 범례 이미지 목록 불일치')
+        manifest={}
+        for page_index,rect,name in specs:
+            path=output/name;path.parent.mkdir(exist_ok=True)
+            pdf[page_index].get_pixmap(matrix=fitz.Matrix(1.5,1.5),clip=rect,alpha=False).save(path)
+            manifest[name]=digest(path)
+    return {**report,'image_hashes':manifest}
