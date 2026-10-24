@@ -3,6 +3,7 @@ import collections,json,re,threading,time,uuid
 import httpx
 from .storage import save,root
 from .quantities import equivalent_fractions,equivalent_scales,equivalent_scaled_numerals,equivalent_percentage_points,percentage_point_errors,WORDS as CARDINALS
+from .quantity_relations import REVISION as RELATION_REVISION,errors as relation_errors
 from .upstream import prepare
 prepare()
 from pdf2zh_next.translator.translator_impl.openai import OpenAITranslator
@@ -118,6 +119,8 @@ def validate_items(inputs,outputs):
             raise ValueError('서식으로 분리된 숫자 표기가 끊기거나 변경되었습니다.')
         if percentage_point_errors(plain(source['input']),plain(target)):raise ValueError('퍼센트(%)와 퍼센트포인트(%p)의 수치·단위 불일치')
         if number_errors(source['input'],target):raise ValueError('숫자·부호·출현 수 불일치: 원문 숫자 표기를 그대로 유지하세요.')
+        relationships=relation_errors(source['input'],target)
+        if relationships:raise ValueError('; '.join(relationships))
     return outputs
 
 
@@ -131,6 +134,9 @@ class KoreanTranslator(OpenAITranslator):
         self.client=openai.OpenAI(base_url=settings.translate_engine_settings.openai_base_url,api_key=settings.translate_engine_settings.openai_api_key,
             timeout=300,max_retries=0,http_client=httpx.Client(trust_env=False,timeout=300))
         self.add_cache_impact_parameters('babelko_protocol','ko-preserve-3')
+        # A completed Qwen-only job may re-enter translation after a new
+        # relation guard is deployed. Do not restore pre-guard cached output.
+        self.add_cache_impact_parameters('babelko_relation_revision',RELATION_REVISION)
     def _request(self,messages,schema=None):
         if self.cancel():raise InterruptedError('취소됨')
         before=getattr(self,'before_request',None)

@@ -72,6 +72,22 @@ opaque. The native KO typesetter is adapted to select its existing CJK spacing;
 the public language code and upstream files stay unchanged.
 Public selected-page corpus and authored semantic controls are reproducible
 with scripts/accuracy_corpus.py and scripts/evaluate_meaning.py.
+Both translation modes additionally check exact number-unit pairs and
+unambiguous identifier=value / group A versus group B assignments before
+accepting a candidate. An explicitly defined technical acronym in
+parentheses is also checked when the translation presents a corresponding
+parenthesized Latin acronym. This catches swapped relationships when the same
+numbers are present on both sides. Korean names for common units and Unicode
+unit glyphs are normalized. Ambiguous clauses, free-form terminology and
+quantity-first group syntax remain with the bilingual model audit rather than
+being guessed by a rule. Quality.json records the relation-check revision;
+older completed exports re-enter the saved-job processing path so the updated
+guard cannot be skipped by a matching PDF hash. The final BabelDOC translation
+tracker is checked again after typesetting so a Qwen-only native cache hit
+cannot bypass the relation guard. Existing layout and translation checkpoints
+remain reusable. The Qwen translation cache key includes the relation-check
+revision, preventing an old unchecked response from being restored after an
+upgrade.
 Before native formula/style analysis, embedded interleaved glyph runs split
 by font/color are reunited into source paragraphs in physical reading order.
 Only same-XObject, substantially overlapping, embedded A-B-A runs qualify;

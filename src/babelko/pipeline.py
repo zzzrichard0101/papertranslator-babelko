@@ -103,6 +103,8 @@ def revalidate_saved_output(folder,state,progress):
     if any(not (out/name).is_file() or digest(out/name)!=state['output_hashes'].get(name) for name in names):return False
     if digest(folder/'Original.pdf')!=state.get('source_sha256'):return False
     quality=read(out/'Quality.json')
+    from .quantity_relations import REVISION as QUANTITY_RELATIONS_REVISION
+    if quality.get('quantity_relations_revision')!=QUANTITY_RELATIONS_REVISION:return False
     from .render_coverage import REVISION as RENDER_REVISION
     stale_render=(state.get('status')=='completed' and
         quality.get('rendered_prose',{}).get('revision')!=RENDER_REVISION)
@@ -146,10 +148,12 @@ def revalidate_saved_output(folder,state,progress):
             or quality.get('translation_tracking',{}).get('status')!='passed'
             or (state.get('mode')=='hybrid' and quality.get('meaning_assurance',{}).get('status')!='passed')):return False
     if state.get('snapshot',{}).get('experimental_pipeline') and not (folder/'region-ledger.json').is_file():return False
-    from .validation import inspect_output,tracking_status
+    from .validation import inspect_output,tracking_status,quantity_relation_status
     from .render_coverage import inspect as inspect_rendered
     tracker=folder/'intermediate'/'translate_tracking.json'
     if not tracker.is_file():return False
+    quantity_relations=quantity_relation_status(tracker)
+    if quantity_relations['status']!='passed':return False
     if stale_images:
         if not (folder/'figure-preservation.json').is_file():return False
         from .figure_legends import rebuild_images
@@ -185,7 +189,7 @@ def revalidate_saved_output(folder,state,progress):
     if rendered['status']!='passed':checks['issues'].append(dict(code='rendered_prose_missing',detail=rendered))
     if tracked['status']!='passed':checks['issues'].append(dict(code='tracked_translation_missing',detail=tracked))
     checks['status']='failed' if checks['issues'] else 'passed'
-    quality.update(checks=checks,translation_tracking=tracked,rendered_prose=rendered)
+    quality.update(checks=checks,translation_tracking=tracked,quantity_relations=quantity_relations,rendered_prose=rendered)
     if regions is not None:quality['region_coverage']=regions
     save(out/'Quality.json',quality);save(folder/'quality.json',quality)
     state['output_hashes']['Quality.json']=digest(out/'Quality.json')
@@ -206,9 +210,12 @@ def run(folder):
         out=Path(state['output'])
         from .assurance import REVISION
         from .references import REVISION as REFERENCES_REVISION
+        from .quantity_relations import REVISION as QUANTITY_RELATIONS_REVISION
         current=state.get('mode')!='hybrid'
         if not current and (out/'Quality.json').is_file():
             current=read(out/'Quality.json').get('meaning_assurance',{}).get('revision')==REVISION
+        if current and (out/'Quality.json').is_file():
+            current=read(out/'Quality.json').get('quantity_relations_revision')==QUANTITY_RELATIONS_REVISION
         if current and state.get('mode')=='hybrid' and (out/'Quality.json').is_file():
             from .semantic_guards import REVISION as GUARDS_REVISION
             current=read(out/'Quality.json').get('translation_guards',{}).get('revision')==GUARDS_REVISION
@@ -420,11 +427,12 @@ def run(folder):
             with performance.measure('export.index_restore'):
                 restored_index_pages=restore_scanned_index(folder/'Original.pdf',out/'Korean.pdf',state,reference_report)
             with performance.measure('export.bilingual'):compose(folder/'Original.pdf',out/'Korean.pdf',out/'Bilingual.pdf',state['selected'])
-            from .validation import inspect_output,tracking_status
+            from .validation import inspect_output,tracking_status,quantity_relation_status
             from .render_coverage import inspect as inspect_rendered
             with performance.measure('validation.pdf'):
                 extracted_pages=[];checks=inspect_output(out/'Korean.pdf',state['selected'],extracted_pages,folder/'Original.pdf')
                 tracked=tracking_status(config.working_dir/'translate_tracking.json')
+                quantity_relations=quantity_relation_status(config.working_dir/'translate_tracking.json')
                 ledger_path=folder/'region-ledger.json'
                 rendered=inspect_rendered(out/'Korean.pdf',config.working_dir/'translate_tracking.json',extracted_pages,
                     folder/'Original.pdf',ledger_path if ledger_path.is_file() else None,state['selected'])
@@ -436,6 +444,8 @@ def run(folder):
                 checks['status']='failed';checks['issues'].append(dict(code='rendered_prose_missing',detail=rendered))
             if tracked['status']!='passed':
                 checks['status']='failed';checks['issues'].append(dict(code='tracked_translation_missing',detail=tracked))
+            if quantity_relations['status']!='passed':
+                checks['status']='failed';checks['issues'].append(dict(code='quantity_relation_mismatch',detail=quantity_relations))
             if translator.hard_failures:
                 checks['status']='failed';checks['issues'].append(dict(code='translation_failed',count=len(translator.hard_failures)))
             if figure_report['status']!='passed':
@@ -447,7 +457,7 @@ def run(folder):
                 checks['status']='failed';checks['issues'].append(dict(code='toc_layout_incomplete',
                     pages=toc.get('unresolved_pages',[])))
             report=dict(protocol=state['protocol'],ocr_revision=state['ocr_revision'],engine='PDFMathTranslate-next + BabelDOC',upstream=state['upstream'],source_sha256=state['source_sha256'],selected_source_pages=[i+1 for i in state['selected']],
-                translation_tracking=tracked,rendered_prose=rendered,assets=asset_report,ocr_source_pages=[i+1 for i in state.get('ocr_pages',[])],checks=checks,requests=translator.requests,retries=translator.retries,translation_calls=translator.translate_call_count,cache_hits=translator.translate_cache_call_count,
+                translation_tracking=tracked,quantity_relations=quantity_relations,rendered_prose=rendered,assets=asset_report,ocr_source_pages=[i+1 for i in state.get('ocr_pages',[])],checks=checks,requests=translator.requests,retries=translator.retries,translation_calls=translator.translate_call_count,cache_hits=translator.translate_cache_call_count,
                 unresolved_translation_failures=translator.hard_failures,semantic_accuracy='not_certified',manually_edited_targets=0,seconds=time.perf_counter()-began)
             report.update(mode=state['mode'],hybrid=getattr(translator,'stats',None),figures=figure_report)
             if toc:report['toc_structure']={key:toc.get(key) for key in ('revision','status','selected_pages','unresolved_pages','restored_paragraphs')}
@@ -456,6 +466,8 @@ def run(folder):
             report['performance']=performance.snapshot()
             report['layout_cache']=read(folder/'layout-cache-report.json') if (folder/'layout-cache-report.json').is_file() else {}
             report['references']=reference_report
+            from .quantity_relations import REVISION as QUANTITY_RELATIONS_REVISION
+            report['quantity_relations_revision']=QUANTITY_RELATIONS_REVISION
             report['restored_original_index_pages']=restored_index_pages
             report['rotation_normalized_source_pages']=[i+1 for i in state.get('rotated_source_pages',[])]
             report['input_transformations']=state.get('input_transformations',{})

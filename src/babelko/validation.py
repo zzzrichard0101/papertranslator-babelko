@@ -49,3 +49,32 @@ def tracking_status(path):
     return dict(status='passed' if found and not missing else 'failed',parsed_translation_units=len(found),units_with_no_output=len(missing),
         reason='no tracked translation inputs' if not found else None,
         scope='BabelDOC tracked translation inputs; not OCR recall or independent semantic coverage')
+
+
+def quantity_relation_status(path):
+    """Recheck tracked outputs, including translations restored from native cache."""
+    from .storage import read
+    from .quantity_relations import REVISION, errors
+    if not path.exists():
+        return dict(revision=REVISION,status='failed',checked_units=0,
+                    issues=[dict(code='translation_tracker_missing')])
+    found=[]
+    def visit(value):
+        if isinstance(value,dict):
+            if 'pdf_unicode' in value and value.get('input'):
+                found.append(value)
+            else:
+                for child in value.values():visit(child)
+        elif isinstance(value,list):
+            for child in value:visit(child)
+    visit(read(path))
+    issues=[]
+    for index,row in enumerate(found):
+        target=row.get('output')
+        if not isinstance(target,str) or not target.strip():
+            continue  # tracking_status reports missing output separately.
+        problems=errors(row['input'],target)
+        if problems:issues.append(dict(tracked_unit=index,codes=problems))
+    return dict(revision=REVISION,status='failed' if issues or not found else 'passed',
+                checked_units=len(found),issues=issues,
+                scope='Explicit number-unit/identifier/group and defined-acronym relations in tracked source and output; not semantic certification')
