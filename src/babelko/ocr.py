@@ -1,5 +1,5 @@
 """Local searchable input for scans; original PDF remains separate."""
-import math,os,shutil,re,hashlib,json,uuid
+import math,os,shutil,re,hashlib,json,uuid,statistics
 from pathlib import Path
 import pymupdf as fitz
 from .storage import digest,save,read
@@ -79,6 +79,10 @@ def prepare(source,destination,mode='auto',progress=print,cancel=lambda:False,se
                     raw_lines=[line for block in recognized[0].get_text('dict')['blocks'] for line in block.get('lines',[])]
                     lines=[]
                     for line in raw_lines:
+                        # The outermost strip of a scan often contains a black
+                        # border that Tesseract calls letters with huge fonts.
+                        if line['bbox'][3]<max(10,recognized[0].rect.height*.015):continue
+                        if unsupported_margin_artifact(line,pixels,rx,ry,recognized[0].rect.width):continue
                         kept=[s for s in line['spans'] if s['text'].strip() and
                               not unsupported_punctuation(s,pixels,rx,ry)]
                         if kept:lines.append({**line,'spans':kept})
@@ -92,8 +96,11 @@ def prepare(source,destination,mode='auto',progress=print,cancel=lambda:False,se
                     # was removed from this input copy, so normal PDF typesetting
                     # removes English without scan-mask ghosts or glyphless numbers.
                     font=fitz.Font('helv');sx=page.rect.width/recognized[0].rect.width;sy=page.rect.height/recognized[0].rect.height
-                    import statistics
                     lines=split_merged_column_lines(lines,recognized[0].rect.width)
+                    prose_sizes=[statistics.median(s['size'] for s in line['spans'] if s['text'].strip())
+                                 for line in lines if len(''.join(s['text'] for s in line['spans']).strip())>25]
+                    body_size=(statistics.median(prose_sizes) if prose_sizes else 12)*sy
+                    line_tops=sorted(line['bbox'][1]*sy for line in lines)
                     runs=[]
                     for line in lines:
                         items=sorted([s for s in line['spans'] if s['text'].strip()],key=lambda s:s['bbox'][0])
@@ -106,10 +113,14 @@ def prepare(source,destination,mode='auto',progress=print,cancel=lambda:False,se
                         for group in groups:
                             text=' '.join(s['text'].strip() for s in group)
                             x0=min(s['bbox'][0] for s in group)*sx;x1=max(s['bbox'][2] for s in group)*sx
-                            baseline=statistics.median(s['origin'][1] for s in group)*sy-line_size*.25
-                            origin=fitz.Point(x0,baseline);width=font.text_length(text,fontsize=line_size)
+                            top=min(s['bbox'][1] for s in group)*sy
+                            gap=min((abs(top-y) for y in line_tops if abs(top-y)>body_size*.5),default=math.inf)
+                            limit=max(body_size*.65,gap*.7) if gap<body_size*1.8 else body_size*1.35
+                            size=min(line_size,limit)
+                            baseline=min(s['bbox'][1] for s in group)*sy+size*.9
+                            origin=fitz.Point(x0,baseline);width=font.text_length(text,fontsize=size)
                             if width<=0:continue
-                            runs.append(dict(text=text,origin=origin,size=line_size,width=width,bbox=(x0,min(s['bbox'][1] for s in group)*sy,x1,max(s['bbox'][3] for s in group)*sy)))
+                            runs.append(dict(text=text,origin=origin,size=size,width=width,bbox=(x0,min(s['bbox'][1] for s in group)*sy,x1,max(s['bbox'][3] for s in group)*sy)))
                     for run in reading_order(runs,page.rect.width):
                         origin=run['origin'];x0,y0,x1,y1=run['bbox']
                         normalized.insert_text(origin,run['text'],fontsize=run['size'],fontname='helv',
@@ -152,8 +163,11 @@ def reading_order(runs,width):
         anchors[-1].append(item)
     anchors=[g for g in anchors if len(g)>=3]
     if len(anchors)!=2 or anchors[1][0]['bbox'][0]-anchors[0][0]['bbox'][0]<width*.25:
-        return sorted(runs,key=lambda r:(r['bbox'][1],r['bbox'][0]))
-    gap=(max(r['bbox'][2] for r in anchors[0])+min(r['bbox'][0] for r in anchors[1]))/2
+        return physical_line_order(runs)
+    left_end=statistics.median(r['bbox'][2] for r in anchors[0])
+    right_start=statistics.median(r['bbox'][0] for r in anchors[1])
+    if left_end>=right_start-3:return physical_line_order(runs)
+    gap=(left_end+right_start)/2
     wide=[r for r in runs if r['bbox'][0]<gap<r['bbox'][2]]
     boundaries=sorted(r['bbox'][1] for r in wide)
     paired=[r for group,other in ((anchors[0],anchors[1]),(anchors[1],anchors[0]))
@@ -166,7 +180,28 @@ def reading_order(runs,width):
         if run in wide:band=2*sum(y0>y for y in boundaries)+1
         else:band=2*sum(y0>y for y in boundaries)
         return band,0 if run in wide else (1 if (x0+x1)/2<gap else 2),y0,x0
-    return sorted(runs,key=key)
+    buckets={}
+    for run in runs:
+        group=key(run)[:2]
+        buckets.setdefault(group,[]).append(run)
+    return [run for group in sorted(buckets) for run in physical_line_order(buckets[group])]
+
+
+def physical_line_order(runs):
+    """Sort fragments on the same printed baseline left-to-right."""
+    lines=[]
+    for run in sorted(runs,key=lambda r:((r['bbox'][1]+r['bbox'][3])/2,r['bbox'][0])):
+        x0,y0,x1,y1=run['bbox'];center=(y0+y1)/2;height=y1-y0
+        candidates=[line for line in lines
+                    if abs(center-line[0])<=max(2,min(height,line[1])*.55) and
+                    abs(y0-statistics.median(r['bbox'][1] for r in line[2]))<=max(3,min(height,line[1])*.5)]
+        if candidates:
+            line=min(candidates,key=lambda line:abs(center-line[0]))
+            line[2].append(run)
+            line[0]=sum((r['bbox'][1]+r['bbox'][3])/2 for r in line[2])/len(line[2])
+        else:lines.append([center,height,[run]])
+    return [run for line in sorted(lines,key=lambda line:line[0])
+            for run in sorted(line[2],key=lambda r:r['bbox'][0])]
 
 
 def split_merged_column_lines(lines,width):
@@ -182,9 +217,10 @@ def split_merged_column_lines(lines,width):
         if x0<width*.25:left.append(line)
         elif x0>width*.42:right.append(line)
     if len(left)<3 or len(right)<3:return lines
-    import statistics
-    gap=(statistics.median(line['bbox'][2] for line in left)+
-         statistics.median(line['bbox'][0] for line in right))/2
+    left_end=statistics.median(line['bbox'][2] for line in left)
+    right_start=statistics.median(line['bbox'][0] for line in right)
+    if left_end>=right_start-3:return lines
+    gap=(left_end+right_start)/2
     if not width*.32<gap<width*.68:return lines
     top=max(min(line['bbox'][1] for line in left),min(line['bbox'][1] for line in right))
     bottom=min(max(line['bbox'][3] for line in left),max(line['bbox'][3] for line in right))
@@ -207,11 +243,29 @@ def split_merged_column_lines(lines,width):
 
 def unsupported_punctuation(span,pixels,rx,ry):
     """Drop isolated punctuation OCR only when its source pixels are blank."""
-    import numpy as np
     value=span['text'].strip()
-    if len(value)<2 or any(ch.isalnum() for ch in value):return False
+    if any(ch.isalnum() for ch in value):return False
     x0,y0,x1,y1=span['bbox'];height,width=pixels.shape[:2]
+    if value in '{}[]|_~' and (x1-x0)*(y1-y0)<2:return True
+    if len(value)<2 and (x1-x0)*(y1-y0)>=4:return False
     a=max(0,int(x0*rx)-2);b=min(width,math.ceil(x1*rx)+2)
     c=max(0,int(y0*ry)-2);d=min(height,math.ceil(y1*ry)+2)
     if a>=b or c>=d:return False
-    return not np.any(pixels[c:d,a:b].min(axis=2)<180)
+    ink=(pixels[c:d,a:b].min(axis=2)<180).mean()
+    return ink==0 or ((x1-x0)*(y1-y0)<4 and ink<.05)
+
+
+def unsupported_margin_artifact(line,pixels,rx,ry,width):
+    """Do not turn a solid scan-hole at the page edge into a word."""
+    x0,y0,x1,y1=line['bbox']
+    if not (x1<width*.09 or x0>width*.91):return False
+    value=''.join(s['text'] for s in line['spans']).strip()
+    letters=len(re.findall(r'[A-Za-z0-9]',value))
+    if letters>3:return False
+    if letters<=1 and (x1<width*.05 or x0>width*.95):return True
+    height,pixel_width=pixels.shape[:2]
+    a=max(0,int(x0*rx)-2);b=min(pixel_width,math.ceil(x1*rx)+2)
+    c=max(0,int(y0*ry)-2);d=min(height,math.ceil(y1*ry)+2)
+    if a>=b or c>=d:return False
+    ink=(pixels[c:d,a:b].min(axis=2)<150).mean()
+    return ink>.35 or '\ufffd' in value

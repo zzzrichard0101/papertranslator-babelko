@@ -97,7 +97,7 @@
       "key": "nasa",
       "source_name": "nasa.pdf",
       "source_sha256": "fcb1ae7a88e5251559dde0b7d51ec71f06795cf78f64491aa9594fdf9ca89334",
-      "label_provenance": "Manual transcription from visually inspected NASA press-kit page 6 pixels; selected prose regions only.",
+      "label_provenance": "Manual transcription from visually inspected NASA press-kit pages 6-8 pixels; selected prose regions only.",
       "pages": [
         {
           "page": 6,
@@ -151,6 +151,61 @@
                 685
               ],
               "text": "Apollo 11 is scheduled for launch at 9:32 a.m. EDT July 16 from the National Aeronautics and Space Administration's Kennedy Space Center Launch Complex 39-A. The mission will be the fifth manned Apollo flight and the third to the Moon."
+            }
+          ]
+        },
+        {
+          "page": 7,
+          "regions": [
+            {
+              "label": "printed-page-number",
+              "bbox": [275, 0, 490, 65],
+              "text": "-3-"
+            },
+            {
+              "label": "blank-left-margin",
+              "bbox": [0, 50, 60, 100],
+              "text": ""
+            },
+            {
+              "label": "mission-objective",
+              "bbox": [85, 65, 560, 158],
+              "text": "The prime mission objective of Apollo 11 is stated simply: Perform a manned lunar landing and return. Successful fulfill- ment of this objective will meet a national goal of this decade, as set by President Kennedy May 25, 1961."
+            },
+            {
+              "label": "prime-crew",
+              "bbox": [85, 173, 560, 330],
+              "text": "Apollo 11 Commander Armstrong and Command Module Pilot Collins 38, and Lunar Module Pilot Aldrin, 39, will each be making his second space flight. Armstrong was Gemini 8 commander, and backup Apollo 8 commander; Collins was Gemini 10 pilot and was command module pilot on the Apollo 8 crew until spinal surgery forced him to leave the crew for recuperation; and Aldrin was Gemini 12 pilot and Apollo 8 backup lunar module pilot."
+            },
+            {
+              "label": "backup-crew",
+              "bbox": [85, 400, 560, 495],
+              "text": "Apollo 11 backup crewmen are Commander James A. Lovell, Command Module Pilot William A. Anders, both of whom were on the Apollo 8 first lunar orbit mission crew, and Lunar Module Pilot Fred W. Haise."
+            }
+          ]
+        },
+        {
+          "page": 8,
+          "regions": [
+            {
+              "label": "blank-right-margin",
+              "bbox": [565, 65, 625, 110],
+              "text": ""
+            },
+            {
+              "label": "backup-function",
+              "bbox": [40, 65, 560, 255],
+              "text": "The backup crew functions in three significant categories. They help the prime crew with mission preparation and hardware checkout activities. They receive nearly complete mission training which becomes a valuable foundation for later assignment as a prime crew and finally, should the prime crew become unavail- able, they are prepared to fly as prime crew on schedule up until the last few weeks at which time full duplicate training becomes too costly and time consuming to be practical."
+            },
+            {
+              "label": "lunar-voyage",
+              "bbox": [40, 275, 560, 440],
+              "text": "Apollo 11, after launch from Launch Complex 39-A, will begin the three-day voyage to the Moon about two and a half hours after the spacecraft is inserted into a 100-nautical mile circular Earth parking orbit. The Saturn V launch vehicle third stage will restart to inject Apollo 11 into a translunar trajectory as the ve- hicle passes over the Pacific midway through the second Earth park- ing orbit."
+            },
+            {
+              "label": "translunar-injection",
+              "bbox": [40, 450, 560, 625],
+              "text": "The go for translunar injection will follow a complete check- out of the space vehicle's readiness to be committed for injection. About a half hour after translunar injection (TLI), the command/ service module will separate from the Saturn third stage, turn around and dock with the lunar module nested in the spacecraft LM adapter. Spring-loaded lunar module holddowns will be released to eject the docked spacecraft from the adapter."
             }
           ]
         }
