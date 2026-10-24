@@ -4,7 +4,7 @@ This measures survival of the ANALYZED source catalog, not OCR recall or truth.
 Equal paragraphs in different cells/pages are distinct occurrences. Translation
 cache keys remain content-based and may legitimately be shared by occurrences.
 """
-import collections,hashlib,json,math,re,threading
+import collections,hashlib,json,math,re,threading,unicodedata
 from contextlib import contextmanager
 from dataclasses import fields,is_dataclass
 from unittest.mock import patch
@@ -12,7 +12,20 @@ import pymupdf as fitz
 from .storage import read,save
 from .render_coverage import TOKENS,canonical
 
-REVISION='spatial-occurrences-2'
+REVISION='spatial-occurrences-4'
+IDENTIFIER=re.compile(r'(?i)(?:[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|(?:https?://|www\.)\S+|10\.\d{4,9}/\S+)')
+
+
+def preserved_identifier(value):
+    """Standalone contact/link identifiers are source-preserved, not prose."""
+    return bool(IDENTIFIER.fullmatch(value.strip()))
+
+
+def opaque_cid_geometry(item,x,y,width,height,tolerance):
+    """An opaque CID may export as a Unicode mark, but must retain its box."""
+    return (abs(item[2]-x)<=2 and abs(item[3]-y)<=tolerance
+        and abs(item[4]-width)<=max(1.,width*.25)
+        and abs(item[5]-height)<=max(2.,height*.5))
 
 
 def box(value):
@@ -87,7 +100,9 @@ class RegionLedger:
                 row=dict(id=identity+'-'+str(ordinal),source_page=page.page_number+1,
                     source_box=position,role=paragraph.layout_label,source=text,inputs=[],record_keys=[],target=None,
                     policy=('preserved_reference' if id(paragraph) in references else
-                        'preserved_figure' if id(paragraph) in figures else 'translate'),debug_id=paragraph.debug_id)
+                        'preserved_figure' if id(paragraph) in figures else
+                        'preserved_identifier' if preserved_identifier(text) else 'translate'),
+                    debug_id=paragraph.debug_id)
                 self.rows.append(row);self.by_object[id(paragraph)]=row
         self.collecting=True
 
@@ -171,7 +186,7 @@ class RegionLedger:
         save(self.folder/'region-ledger.json',dict(revision=REVISION,source_sha256=self.source_sha256,regions=self.rows,unmapped=self.unknown))
 
     def inspect(self,path,selected,source_path=None,restored_index_pages=None,save_report=True):
-        issues=[];checked=0;glyph_count=0
+        issues=[];checked=0;glyph_count=0;opaque_cid_matches=0
         if self.unknown:issues.append(dict(code='unmapped_translation',count=len(self.unknown)))
         page_map={source+1:target for target,source in enumerate(selected)}
         cid_pages={page_map[row['source_page']] for row in self.rows if row['source_page'] in page_map
@@ -190,7 +205,10 @@ class RegionLedger:
                                 x0,y0,x1,y1=char['bbox'];x=(x0+x1)/2;y=(y0+y1)/2
                                 raw_id=glyph_count;glyph_count+=1
                                 if page_index in cid_pages:
-                                    raw_pool[(math.floor(x/16),math.floor(y/16),char['c'])].append((raw_id,char['c'],x,y))
+                                    raw_item=(raw_id,char['c'],x,y,x1-x0,y1-y0)
+                                    raw_pool[(math.floor(x/16),math.floor(y/16),char['c'])].append(raw_item)
+                                    if char['c'] and unicodedata.category(char['c'][0])[0] in {'M','S'}:
+                                        raw_pool[(math.floor(x/16),math.floor(y/16),None)].append(raw_item)
                                 for offset,c in enumerate('\ufffd' if char['c']=='\ufffd' else canonical(char['c'])):
                                     item_id=raw_id if offset==0 else glyph_count
                                     if offset:glyph_count+=1
@@ -266,7 +284,25 @@ class RegionLedger:
                                             if item[0] not in used_cids[page_index] and abs(item[2]-x)<=2 and abs(item[3]-y)<=cid_tolerance:
                                                 options.append(((item[2]-x)**2+(item[3]-y)**2,item[0]))
                             if options:
-                                used_cids[page_index].add(min(options)[1]);continue
+                                matched=min(options)[1]
+                                used_cids[page_index].add(matched);used[page_index].add(matched)
+                                continue
+                            # Some embedded fonts expose a CID as a combining
+                            # mark or symbol (for example a copyright circle).
+                            # This proves a glyph at the planned position, not
+                            # semantic identity, so never accept ordinary text.
+                            width=x1-x0;height_g=y1-y0
+                            for gx in range(math.floor((x-2)/16),math.floor((x+2)/16)+1):
+                                for gy in range(math.floor((y-cid_tolerance)/16),math.floor((y+cid_tolerance)/16)+1):
+                                    for item in raw_pools[page_index].get((gx,gy,None),[]):
+                                        if (item[0] not in used_cids[page_index] and item[0] not in used[page_index]
+                                                and opaque_cid_geometry(item,x,y,width,height_g,cid_tolerance)):
+                                            options.append(((item[2]-x)**2+(item[3]-y)**2,item[0]))
+                            if options:
+                                matched=min(options)[1]
+                                used_cids[page_index].add(matched);used[page_index].add(matched)
+                                opaque_cid_matches+=1
+                                continue
                         for gx in range(math.floor((x-tolerance)/16),math.floor((x+tolerance)/16)+1):
                             for gy in range(math.floor((y-tolerance)/16),math.floor((y+tolerance)/16)+1):
                                 for item in pools[page_index].get((gx,gy,c),[]):
@@ -282,7 +318,7 @@ class RegionLedger:
                 if source_pdf is not None:source_pdf.close()
         report=dict(revision=REVISION,status='failed' if issues else 'passed',checked_regions=checked,
             preserved_references=sum(r['policy']=='preserved_reference' for r in self.rows),
-            pixel_verified_index_pages=sorted(verified_index),issues=issues,
+            pixel_verified_index_pages=sorted(verified_index),opaque_cid_geometry_matches=opaque_cid_matches,issues=issues,
             scope='Analyzed source occurrences, replay, typeset text counts and per-glyph PDF positions; restored index pages require exact source pixels. Not OCR recall, reading order or semantic certification.')
         if save_report:save(self.folder/'region-coverage.json',report)
         return report

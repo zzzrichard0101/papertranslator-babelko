@@ -7,7 +7,13 @@ RegionLedger를 기본 완료 차단 검사로 승격하기 전에 정상 PDF �
 실행
   python scripts/audit_region_corpus.py test_vault --manifest test_vault/region-labels.json --output test_vault/region-audit.json
 
-manifest는 {"작업 ID": "clean", "작업 ID": "fault"} 형식이다. clean/fault는
+실제 PDF의 manifest 값은
+  {"작업 ID": {"label": "clean", "korean_sha256": "검토한 Korean.pdf의 SHA-256"}}
+형식이다. 파일이 검토 이후 바뀌면 그 라벨을 집계하지 않는다. 시험 코드가
+만들고 즉시 검사하는 합성 작업만 "clean"/"fault" 문자열을 쓸 수 있다.
+정상(clean) 표본은 전체 작업 상태도 completed여야 한다. 번역 실패로 partial이
+된 출력은 공간 검사만 통과했더라도 기본판 승격용 정상 표본으로 세지 않는다.
+clean/fault는
 원본과 PDF를 독립적으로 확인한 사람이 붙이거나, 시험 코드가 출력 훼손을
 직접 주입하며 붙여야 한다. 검사 결과를 보고 라벨을 만들면 오탐률을 측정할
 수 없다. 스크립트는 기존 작업 상태, PDF, region-coverage.json을 수정하지
@@ -23,6 +29,14 @@ manifest는 {"작업 ID": "clean", "작업 ID": "fault"} 형식이다. clean/fau
 합성 통합 시험은 정상 출력, 전체 글자 유실, 짧은 표 셀 이동을 각각 라벨링해
 감사 스크립트에 넣는다. 합성 시험 통과를 실제 문서 20개 검증으로 세지 않는다.
 
-2026-10-24 현재 보관 기록 44건을 재생했으며, 그중 현재 검사 revision으로
-수집된 기록은 14건이다. 기존 기록은 합성 시험 위주이고 독립 라벨을 붙인
-실제 정상 논문은 아직 0건이다. 따라서 기본 완료 차단 검사로 승격하지 않았다.
+2026-10-24 초기 조사에서 보관 기록 44건 중 당시 revision 2 기록은 14건이었다.
+대부분 합성 시험이어서 실제 논문 오탐률로 해석할 수 없었다. 이후 실제 논문
+검사에서 발견한 식별자·CID 사례를 수정하며 revision 4로 올렸다. 이전 버전
+기록은 다시 번역하거나 정당한 저장 출력 재검증을 거쳐야 승격 근거가 된다.
+
+같은 날 공개 자료의 선택 쪽 4종(JMLR 단일 칼럼, ACL 2칼럼, RFC 규격,
+NASA 스캔)을 실제 로컬 모델로 새 실험 작업에 실행했다. 단일 칼럼 1종은
+completed와 공간 검사 passed를 얻었고 출력 화면도 확인했다. 나머지 3종은
+각각 번역 문단 실패로 partial이므로 정상 표본에 넣지 않는다. 이 중 RFC는
+공간 검사만 통과했고, ACL/NASA는 실패한 번역 기록 때문에 공간 검사도
+실패했다. 출력 의미 정확도 평가는 여기서 수행하지 않았다.

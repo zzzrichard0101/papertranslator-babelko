@@ -1,6 +1,6 @@
 from types import SimpleNamespace as NS
 import pymupdf as fitz
-from babelko.region_ledger import RegionLedger,pixels_preserved
+from babelko.region_ledger import RegionLedger,pixels_preserved,preserved_identifier,opaque_cid_geometry
 from babelko.storage import save
 
 
@@ -116,6 +116,24 @@ def test_source_occurrence_ids_distinguish_page_and_geometry_but_share_content(t
     ledger=RegionLedger(tmp_path);ledger.begin(NS(page=pages))
     assert len({r['id'] for r in ledger.rows})==3
     assert len({r['source'] for r in ledger.rows})==1
+
+
+def test_standalone_contact_identifiers_are_preserved_without_model_submission(tmp_path):
+    examples=['author@example.org','https://example.org/project','10.1234/paper.2026']
+    assert all(preserved_identifier(value) for value in examples)
+    assert not preserved_identifier('Contact author@example.org for details.')
+    paragraphs=[NS(unicode=value,box=NS(x=50,y=50+i*20,x2=250,y2=65+i*20),
+        layout_label='plain text',debug_id=str(i)) for i,value in enumerate(examples)]
+    ledger=RegionLedger(tmp_path)
+    ledger.begin(NS(page=[NS(page_number=0,pdf_paragraph=paragraphs)]))
+    assert [item['policy'] for item in ledger.rows]==['preserved_identifier']*3
+
+
+def test_opaque_cid_fallback_requires_nearby_same_sized_symbol():
+    mark=(1,'\u20dd',113.14,730.2,8.05,7.15)
+    assert opaque_cid_geometry(mark,113.14,728.56,8.04,7.57,10)
+    assert not opaque_cid_geometry((1,'\u20dd',135,730.2,8.05,7.15),113.14,728.56,8.04,7.57,10)
+    assert not opaque_cid_geometry((1,'\u20dd',113.14,730.2,20,7.15),113.14,728.56,8.04,7.57,10)
 
 
 def test_batch_worker_and_paragraph_worker_bind_by_source_and_returned_target(tmp_path):

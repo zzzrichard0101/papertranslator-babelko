@@ -12,7 +12,7 @@ WORDS={'Synthetic':'합성','research':'연구','study':'연구','Research':'연
 def converted(text):return re.sub(r'[A-Za-z]+',lambda m:WORDS.get(m[0],m[0]),text)
 
 
-def main(mode='qwen',experimental=False,diverse=False):
+def main(mode='qwen',experimental=False,diverse=False,source_override=None,pages=''):
     p=project();work=p/'test_vault'/('integration-'+mode+'-'+uuid.uuid4().hex[:8]);work.mkdir(parents=True)
     home=work/'home';home.mkdir();prepared=Path(os.environ['LOCALAPPDATA'])/'PaperTranslatorBabelKO/assets'
     if prepared.is_dir():
@@ -56,14 +56,20 @@ def main(mode='qwen',experimental=False,diverse=False):
             raster_index=doc.new_page(width=600,height=800)
             raster_index.insert_image(raster_index.rect,pixmap=index_scan)
         doc.save(source)
-    source_sha=digest(source);calls=[];bad=[False];repair_faults=[0]
+    if source_override:source=Path(source_override).resolve()
+    source_sha=digest(source);calls=[];bad=[bool(source_override)];repair_faults=[3 if source_override else 0]
+    def convert(value):
+        if not source_override:return converted(value)
+        # Layout-only fixture: create Korean glyphs while retaining all
+        # punctuation and digits. It is deliberately not a translation.
+        return re.sub(r'[A-Za-z]+',lambda match:WORDS.get(match[0]) or '가'*min(4,len(match[0])),value)
     class Server(BaseHTTPRequestHandler):
         def log_message(self,*a):pass
         def do_POST(self):
             payload=json.loads(self.rfile.read(int(self.headers['Content-Length'])));calls.append(payload)
             inputs=next((m['content'].rsplit('## Here is the input:',1)[1].strip() for m in payload['messages'] if '## Here is the input:' in m['content']),None)
             if inputs:
-                content=[dict(id=x['id'],output=converted(x['input'])) for x in json.loads(inputs)]
+                content=[dict(id=x['id'],output=convert(x['input'])) for x in json.loads(inputs)]
                 if not bad[0]:content=[];bad[0]=True
                 text=json.dumps(content,ensure_ascii=False)
             elif payload['messages'][0]['content'].startswith('Review EACH'):
@@ -76,16 +82,16 @@ def main(mode='qwen',experimental=False,diverse=False):
                     text=json.dumps([[v[k] for k in ['id','verdict','evidence','reason']] for v in json.loads(text)])
             elif payload['messages'][0]['content'].startswith('Translate the following TARGET'):
                 original=payload['messages'][0]['content'].rsplit('\n\n',1)[1]
-                text=converted(original)
+                text=convert(original)
                 if not bad[0] and '24' in original:text=text.replace('24','42');bad[0]=True
             elif payload['messages'][0]['content'].startswith('Translate ONLY the value of SOURCE'):
-                text=converted(json.loads(payload['messages'][1]['content'])['SOURCE'])
+                text=convert(json.loads(payload['messages'][1]['content'])['SOURCE'])
                 if mode=='hybrid' and '24' in text and repair_faults[0]<3:
                     repair_faults[0]+=1;text=text.replace('24','42')
             else:
                 original=next((m['content'].rsplit('Now translate the following text:',1)[1].strip() for m in payload['messages'] if 'Now translate the following text:' in m['content']),None)
                 if original is None:original=next((m['content'].rsplit('Input:\n\n',1)[1] for m in payload['messages'] if 'Input:\n\n' in m['content']),'Hello')
-                text=converted(original)
+                text=convert(original)
             value=dict(id='synthetic',object='chat.completion',created=0,model='synthetic',choices=[dict(index=0,message=dict(role='assistant',content=text),finish_reason='stop')],usage=dict(prompt_tokens=10,completion_tokens=10,total_tokens=20))
             data=json.dumps(value,ensure_ascii=False).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
     server=ThreadingHTTPServer(('127.0.0.1',0),Server);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
@@ -98,6 +104,22 @@ def main(mode='qwen',experimental=False,diverse=False):
         def close(self):events.append(('close',self.model['id']))
     try:
         with patch('babelko.engine.LocalEngine',Engine):
+            if source_override:
+                if mode!='hybrid' or not experimental:
+                    raise ValueError('실제 문서 공간 검사는 hybrid --experimental-pipeline을 사용하세요.')
+                folder=create(source,p/'test_vault',pages=pages,mode=mode,experimental_pipeline=True)
+                result=run(folder)
+                quality=read(Path(result['output'])/'Quality.json') if result.get('output') else {}
+                regions=quality.get('region_coverage',{})
+                summary=dict(job_id=folder.name,source_sha256=source_sha,
+                    status=result['status'],selected_pages=result['selected'],
+                    region_status=regions.get('status'),checked_regions=regions.get('checked_regions',0),
+                    region_issue_codes=sorted({code for issue in regions.get('issues',[])
+                        for code in issue.get('codes',[issue.get('code','unknown')])}),
+                    local_model_calls=False,semantic_accuracy='not_evaluated')
+                save(work/'result.json',summary)
+                print(json.dumps(summary,ensure_ascii=False),flush=True)
+                return summary
             folder=create(source,p/'test_vault',mode=mode,experimental_pipeline=experimental);result=run(folder)
             audit_labels={folder.name:'clean'} if experimental else {}
             assert result['status']=='completed',result
@@ -206,4 +228,4 @@ def main(mode='qwen',experimental=False,diverse=False):
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--mode',choices=['qwen','hybrid'],default='qwen');parser.add_argument('--experimental-pipeline',action='store_true');parser.add_argument('--diverse',action='store_true');args=parser.parse_args();main(args.mode,args.experimental_pipeline,args.diverse)
+    parser=argparse.ArgumentParser();parser.add_argument('--mode',choices=['qwen','hybrid'],default='qwen');parser.add_argument('--experimental-pipeline',action='store_true');parser.add_argument('--diverse',action='store_true');parser.add_argument('--source',type=Path);parser.add_argument('--pages',default='');args=parser.parse_args();main(args.mode,args.experimental_pipeline,args.diverse,args.source,args.pages)

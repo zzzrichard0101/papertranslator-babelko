@@ -32,6 +32,14 @@ def audit_job(job,label=None):
     output=Path(state['output'])/'Korean.pdf' if state.get('output') else None
     if not source.is_file() or output is None or not output.is_file():
         raise FileNotFoundError('saved source or Korean PDF missing')
+    model_id=state.get('snapshot',{}).get('model',{}).get('id','')
+    synthetic=model_id.startswith('synthetic-')
+    if isinstance(label,dict):
+        if digest(output)!=label.get('korean_sha256'):
+            raise ValueError('reviewed PDF hash mismatch')
+        label=label['label']
+    elif label is not None and not synthetic:
+        raise ValueError('real PDF labels require korean_sha256')
     # Early ledger revisions did not store the source hash. The job's copied
     # original is still independently checked against its creation snapshot.
     if (digest(source)!=state['source_sha256'] or
@@ -46,10 +54,10 @@ def audit_job(job,label=None):
         quality.get('restored_original_index_pages',[]),save_report=False)
     codes=collections.Counter(code for issue in report['issues']
         for code in issue.get('codes',[issue.get('code','unknown')]))
-    model_id=state.get('snapshot',{}).get('model',{}).get('id','')
-    return dict(job_id=job.name,label=label or 'unlabeled',source_sha256=state['source_sha256'],
+    return dict(job_id=job.name,label=label or 'unlabeled',pipeline_status=state.get('status'),
+        source_sha256=state['source_sha256'],
         captured_revision=ledger_data.get('revision'),eligible=ledger_data.get('revision')==REVISION,
-        synthetic=model_id.startswith('synthetic-'),
+        synthetic=synthetic,
         layout_signature=layout_signature(source,state['selected'],state.get('ocr_pages',[])),
         source_pages=len(state['selected']),checked_regions=report['checked_regions'],
         verdict=report['status'],issue_codes=dict(sorted(codes.items())))
@@ -65,7 +73,9 @@ def audit_corpus(root,labels=None):
         except (FileNotFoundError,KeyError,ValueError,RuntimeError,fitz.FileDataError) as error:
             skipped.append(dict(job_id=job.name,reason=type(error).__name__))
     eligible=[row for row in rows if row['eligible']]
-    clean=[row for row in eligible if row['label']=='clean']
+    ineligible_clean=[row['job_id'] for row in eligible
+        if row['label']=='clean' and row['pipeline_status']!='completed']
+    clean=[row for row in eligible if row['label']=='clean' and row['pipeline_status']=='completed']
     faulty=[row for row in eligible if row['label']=='fault']
     real_clean=[row for row in clean if not row['synthetic']]
     false_positives=[row['job_id'] for row in clean if row['verdict']=='failed']
@@ -78,6 +88,7 @@ def audit_corpus(root,labels=None):
         historical_revision_jobs=len(rows)-len(eligible),skipped=skipped,
         verdicts=dict(collections.Counter(row['verdict'] for row in rows)),
         labeled_clean=len(clean),labeled_fault=len(faulty),
+        ineligible_clean_jobs=ineligible_clean,
         real_clean_sources=distinct_real_sources,real_clean_layouts=distinct_real_layouts,
         false_positive_jobs=false_positives,missed_fault_jobs=missed_faults,
         promotion_evidence_ready=ready,
@@ -92,8 +103,12 @@ def main():
     parser.add_argument('--output',type=Path,help='Write a text-free JSON summary')
     args=parser.parse_args()
     labels=read(args.manifest) if args.manifest else {}
-    if not isinstance(labels,dict) or any(value not in {'clean','fault'} for value in labels.values()):
-        parser.error('manifest must map job IDs to clean or fault')
+    if (not isinstance(labels,dict) or any(
+            (value not in {'clean','fault'} if isinstance(value,str) else
+                not isinstance(value,dict) or value.get('label') not in {'clean','fault'}
+                or not isinstance(value.get('korean_sha256'),str))
+            for value in labels.values())):
+        parser.error('manifest values must be clean/fault or {label, korean_sha256}')
     result=audit_corpus(args.root,labels)
     if args.output:save(args.output,result)
     print(json.dumps({key:value for key,value in result.items() if key!='jobs_detail'},ensure_ascii=False,indent=2))
