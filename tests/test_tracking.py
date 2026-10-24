@@ -74,8 +74,10 @@ def test_old_semantic_certificate_cannot_reuse_completed_job(tmp_path,monkeypatc
         from babelko.references import REVISION as REFERENCES_REVISION
         from babelko.semantic_guards import REVISION as GUARDS_REVISION
         from babelko.figure_legends import REVISION as FIGURE_REVISION
+        from babelko.render_coverage import REVISION as RENDER_REVISION
         save(out/'Quality.json',dict(meaning_assurance=dict(revision=revision),references=dict(revision=REFERENCES_REVISION),
-            translation_guards=dict(revision=GUARDS_REVISION),figures=dict(revision=FIGURE_REVISION,status='passed')))
+            translation_guards=dict(revision=GUARDS_REVISION),figures=dict(revision=FIGURE_REVISION,status='passed'),
+            rendered_prose=dict(revision=RENDER_REVISION)))
         value=dict(protocol=PROTOCOL,ocr_revision=OCR_REVISION,mode='hybrid',status='completed',
             output=str(out),output_hashes={'Quality.json':digest(out/'Quality.json')},source_sha256=digest(folder/'Original.pdf'))
         save(folder/'state.json',value);return value
@@ -101,6 +103,7 @@ def test_experimental_completed_job_requires_current_spatial_and_context_evidenc
     from babelko.document_context import REVISION as CONTEXT
     from babelko.semantic_guards import REVISION as GUARDS
     from babelko.figure_legends import REVISION as FIGURES
+    from babelko.render_coverage import REVISION as RENDER
     from babelko.policy import PROTOCOL,OCR_REVISION
     from babelko.storage import digest
     folder=tmp_path/'jobs'/'job';folder.mkdir(parents=True)
@@ -111,10 +114,60 @@ def test_experimental_completed_job_requires_current_spatial_and_context_evidenc
     for region_revision,context_revision,region_status in [(REGIONS,CONTEXT,'passed'),('old',CONTEXT,'passed'),(REGIONS,'old','passed'),(REGIONS,CONTEXT,'failed')]:
         save(out/'Quality.json',dict(meaning_assurance=dict(revision=REVISION),references=dict(revision=REFERENCES),
             translation_guards=dict(revision=GUARDS),figures=dict(revision=FIGURES,status='passed'),
-            region_coverage=dict(revision=region_revision,status=region_status),document_context=dict(revision=context_revision)))
+            rendered_prose=dict(revision=RENDER),region_coverage=dict(revision=region_revision,status=region_status),
+            document_context=dict(revision=context_revision)))
         state=dict(protocol=PROTOCOL,ocr_revision=OCR_REVISION,mode='hybrid',status='completed',snapshot=dict(experimental_pipeline=True),
             output=str(out),output_hashes={'Quality.json':digest(out/'Quality.json')},source_sha256=digest(folder/'Original.pdf'))
         save(folder/'state.json',state)
         if region_revision==REGIONS and context_revision==CONTEXT and region_status=='passed':assert pipeline.run(folder)==state
         else:
             with pytest.raises(RuntimeError,match='updated spatial processing'):pipeline.run(folder)
+
+
+def test_completed_job_with_old_render_qa_rechecks_saved_pdf_without_translation(tmp_path,monkeypatch):
+    import pymupdf as fitz
+    import babelko.pipeline as pipeline
+    from babelko.assurance import REVISION as ASSURANCE_REVISION
+    from babelko.figure_legends import REVISION as FIGURE_REVISION
+    from babelko.hybrid import OUTPUT_POLICY_REVISION
+    from babelko.policy import PROTOCOL,OCR_REVISION
+    from babelko.references import REVISION as REFERENCES_REVISION
+    from babelko.semantic_guards import REVISION as GUARDS_REVISION
+    from babelko.storage import digest,read
+
+    folder=tmp_path/'jobs'/'job';(folder/'intermediate').mkdir(parents=True)
+    out=tmp_path/'result';out.mkdir()
+    with fitz.open() as doc:
+        doc.new_page().insert_text((50,50),'English source')
+        doc.save(folder/'Original.pdf')
+    for name in ('Original.pdf','Korean.pdf','Bilingual.pdf'):
+        (out/name).write_bytes((folder/'Original.pdf').read_bytes())
+    (out/'FigureLegends.html').write_text('No labels',encoding='utf-8')
+    save(out/'FigureLegends.json',dict(revision=FIGURE_REVISION,status='passed'))
+    save(folder/'intermediate'/'translate_tracking.json',dict(page=[dict(paragraph=[dict(
+        pdf_unicode='disabled',input='disabled',output='비활성화')])]))
+    sha=digest(folder/'Original.pdf')
+    save(out/'Quality.json',dict(source_sha256=sha,checks=dict(status='passed',issues=[]),
+        translation_tracking=dict(status='passed'),meaning_assurance=dict(revision=ASSURANCE_REVISION,status='passed'),
+        translation_guards=dict(revision=GUARDS_REVISION),references=dict(revision=REFERENCES_REVISION),
+        figures=dict(revision=FIGURE_REVISION,status='passed'),hybrid_output_policy=OUTPUT_POLICY_REVISION,
+        rendered_prose=dict(revision='old-long-only'),unresolved_translation_failures=[]))
+    state=dict(protocol=PROTOCOL,ocr_revision=OCR_REVISION,status='completed',mode='hybrid',
+        source_sha256=sha,selected=[0],snapshot={},output=str(out),
+        output_hashes={name:digest(out/name) for name in
+            ('Original.pdf','Korean.pdf','Bilingual.pdf','Quality.json','FigureLegends.html','FigureLegends.json')})
+    save(folder/'state.json',state)
+    monkeypatch.setattr(pipeline,'root',lambda:tmp_path)
+    monkeypatch.setattr(pipeline,'prepare',lambda:pytest.fail('translation preparation restarted'))
+    monkeypatch.setattr('babelko.validation.inspect_output',lambda *args:dict(status='passed',issues=[],pages=[]))
+    quality=read(out/'Quality.json')
+    quality['meaning_assurance']['revision']='obsolete-auditor'
+    save(out/'Quality.json',quality);state['output_hashes']['Quality.json']=digest(out/'Quality.json')
+    assert not pipeline.revalidate_saved_output(folder,state,lambda *_:pytest.fail('obsolete QA reused'))
+    quality['meaning_assurance']['revision']=ASSURANCE_REVISION
+    save(out/'Quality.json',quality);state['output_hashes']['Quality.json']=digest(out/'Quality.json')
+    save(folder/'state.json',state)
+    result=pipeline.run(folder)
+    assert result['status']=='partial'
+    assert read(out/'Quality.json')['rendered_prose']['missing_short_fragments']==1
+    assert digest(out/'Quality.json')==result['output_hashes']['Quality.json']

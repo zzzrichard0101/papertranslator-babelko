@@ -80,13 +80,36 @@ def compose(original,korean,destination,selected):
 
 
 def revalidate_saved_output(folder,state,progress):
-    """Resume a job that finished translation/export but failed final PDF QA."""
-    if state.get('status') not in {'failed','partial'} or not state.get('output') or not state.get('output_hashes'):return False
+    """Recheck an intact saved export after a final-PDF QA failure or revision."""
+    if state.get('status') not in {'failed','partial','completed'} or not state.get('output') or not state.get('output_hashes'):return False
     out=Path(state['output'])
     names=('Original.pdf','Korean.pdf','Bilingual.pdf','Quality.json')
     if any(not (out/name).is_file() or digest(out/name)!=state['output_hashes'].get(name) for name in names):return False
     if digest(folder/'Original.pdf')!=state.get('source_sha256'):return False
     quality=read(out/'Quality.json')
+    from .render_coverage import REVISION as RENDER_REVISION
+    stale_render=(state.get('status')=='completed' and
+        quality.get('rendered_prose',{}).get('revision')!=RENDER_REVISION)
+    if state.get('status')=='completed' and not stale_render:return False
+    if stale_render:
+        from .references import REVISION as REFERENCES_REVISION
+        if quality.get('references',{}).get('revision')!=REFERENCES_REVISION:return False
+        if state.get('mode')=='hybrid':
+            from .assurance import REVISION as ASSURANCE_REVISION
+            from .semantic_guards import REVISION as GUARDS_REVISION
+            if (quality.get('meaning_assurance',{}).get('revision')!=ASSURANCE_REVISION or
+                quality.get('translation_guards',{}).get('revision')!=GUARDS_REVISION):return False
+        if state.get('snapshot',{}).get('experimental_pipeline'):
+            from .region_ledger import REVISION as REGION_REVISION
+            from .document_context import REVISION as CONTEXT_REVISION
+            if (quality.get('region_coverage',{}).get('revision')!=REGION_REVISION or
+                quality.get('region_coverage',{}).get('status')!='passed' or
+                quality.get('document_context',{}).get('revision')!=CONTEXT_REVISION):return False
+        if state.get('ocr_pages'):
+            from .scan_evidence import REVISION as SCAN_REVISION,LAYOUT_REVISION
+            scan=quality.get('scan_recovery',{})
+            if (scan.get('revision')!=SCAN_REVISION or
+                (scan.get('layout') and scan['layout'].get('revision')!=LAYOUT_REVISION)):return False
     from .figure_legends import REVISION as FIGURE_REVISION
     if (quality.get('figures',{}).get('revision')!=FIGURE_REVISION or
         quality.get('figures',{}).get('status')!='passed' or
@@ -95,7 +118,8 @@ def revalidate_saved_output(folder,state,progress):
     if state.get('mode')=='hybrid':
         from .hybrid import OUTPUT_POLICY_REVISION
         if quality.get('hybrid_output_policy')!=OUTPUT_POLICY_REVISION:return False
-    if (quality.get('source_sha256')!=state['source_sha256'] or quality.get('checks',{}).get('status')!='failed'
+    expected_checks='passed' if stale_render else 'failed'
+    if (quality.get('source_sha256')!=state['source_sha256'] or quality.get('checks',{}).get('status')!=expected_checks
             or quality.get('unresolved_translation_failures')
             or quality.get('translation_tracking',{}).get('status')!='passed'
             or (state.get('mode')=='hybrid' and quality.get('meaning_assurance',{}).get('status')!='passed')):return False
@@ -153,6 +177,9 @@ def run(folder):
             from .figure_legends import REVISION as FIGURE_REVISION
             figures=read(out/'Quality.json').get('figures',{})
             current=figures.get('revision')==FIGURE_REVISION and figures.get('status')=='passed'
+        if current and (out/'Quality.json').is_file():
+            from .render_coverage import REVISION as RENDER_REVISION
+            current=read(out/'Quality.json').get('rendered_prose',{}).get('revision')==RENDER_REVISION
         current=current and (out/'Quality.json').is_file() and read(out/'Quality.json').get('references',{}).get('revision')==REFERENCES_REVISION
         if current and state.get('snapshot',{}).get('experimental_pipeline'):
             from .region_ledger import REVISION as REGION_REVISION

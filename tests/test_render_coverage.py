@@ -57,3 +57,39 @@ def test_individually_drawn_korean_glyphs_reconstruct_visual_row(tmp_path):
         doc.save(pdf)
     save(tracker,dict(page=[dict(pdf_unicode='Background',input='Background',output=text)]))
     assert inspect(pdf,tracker)['status']=='passed'
+
+
+def test_missing_short_translation_fails_even_on_an_empty_page(tmp_path):
+    pdf=tmp_path/'missing-short.pdf';tracker=tmp_path/'tracking.json'
+    with fitz.open() as doc:
+        doc.new_page();doc.save(pdf)
+    save(tracker,dict(page=[dict(pdf_unicode='disabled',input='disabled',output='비활성화')]))
+    result=inspect(pdf,tracker)
+    assert result['status']=='failed'
+    assert result['missing_short_fragments']==1
+    assert result['missing'][0]['code']=='short_text_missing'
+
+
+def test_short_phrase_is_present_and_repeated_short_phrase_needs_two_occurrences(tmp_path):
+    pdf=tmp_path/'short.pdf';tracker=tmp_path/'tracking.json'
+    with fitz.open() as doc:
+        doc.new_page().insert_text((30,50),'비활성화',fontname='korea');doc.save(pdf)
+    save(tracker,dict(page=[dict(paragraph=[
+        dict(pdf_unicode='disabled',input='disabled',output='비활성화'),
+        dict(pdf_unicode='disabled again',input='disabled again',output='비활성화')])]))
+    result=inspect(pdf,tracker)
+    assert result['status']=='failed' and result['missing_short_fragments']==1
+    save(tracker,dict(page=[dict(pdf_unicode='disabled',input='disabled',output='비활성화')]))
+    assert inspect(pdf,tracker)['status']=='passed'
+
+
+def test_long_sentence_cannot_also_pay_for_a_missing_short_unit(tmp_path):
+    pdf=tmp_path/'embedded.pdf';tracker=tmp_path/'tracking.json'
+    long='이 문장은 비활성화 상태가 표시된다는 사실을 설명합니다'
+    with fitz.open() as doc:
+        doc.new_page().insert_text((30,50),long,fontname='korea');doc.save(pdf)
+    save(tracker,dict(page=[dict(paragraph=[
+        dict(pdf_unicode='Long',input='Long',output=long),
+        dict(pdf_unicode='Short',input='Short',output='비활성화')])]))
+    result=inspect(pdf,tracker)
+    assert result['status']=='failed' and result['missing_short_fragments']==1
