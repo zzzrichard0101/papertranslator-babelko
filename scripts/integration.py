@@ -99,6 +99,7 @@ def main(mode='qwen',experimental=False,diverse=False):
     try:
         with patch('babelko.engine.LocalEngine',Engine):
             folder=create(source,p/'test_vault',mode=mode,experimental_pipeline=experimental);result=run(folder)
+            audit_labels={folder.name:'clean'} if experimental else {}
             assert result['status']=='completed',result
             out=Path(result['output']);quality=read(out/'Quality.json')
             if experimental:
@@ -165,6 +166,7 @@ def main(mode='qwen',experimental=False,diverse=False):
                             placeholder.insert_text((30,40),'Exporter fault: translated prose lost.')
                         blank.save(destination)
                 broken=create(source,p/'test_vault',mode=mode,experimental_pipeline=experimental)
+                if experimental:audit_labels[broken.name]='fault'
                 with patch('babelko.pdf_preservation.optimize',lost_export):run(broken)
                 failed=read(broken/'state.json');report=read(Path(failed['output'])/'Quality.json')
                 assert failed['status']=='partial' and report['rendered_prose']['status']=='failed'
@@ -183,6 +185,7 @@ def main(mode='qwen',experimental=False,diverse=False):
                             pdf[0].insert_text((cell[0]+100,cell[3]-2),'12',fontsize=11)
                             pdf.saveIncr()
                     broken=create(source,p/'test_vault',mode=mode,experimental_pipeline=True)
+                    audit_labels[broken.name]='fault'
                     with patch('babelko.pdf_preservation.optimize',moved_cell):run(broken)
                     failed=read(broken/'state.json');report=read(Path(failed['output'])/'Quality.json')
                     assert failed['status']=='partial'
@@ -190,6 +193,12 @@ def main(mode='qwen',experimental=False,diverse=False):
                     assert report['region_coverage']['status']=='failed'
                     assert any('pdf_glyph_missing_or_moved' in v.get('codes',[]) for v in report['region_coverage']['issues'])
                     cell_move_rejected=True
+            if experimental:
+                from audit_region_corpus import audit_corpus
+                audit=audit_corpus(home/'jobs',audit_labels)
+                assert audit['labeled_clean']==1 and audit['labeled_fault']==2,audit
+                assert not audit['skipped'] and not audit['false_positive_jobs'] and not audit['missed_fault_jobs'],audit
+                save(work/'region-audit.json',audit)
             save(work/'result.json',dict(status='passed',output=str(out),source_hash_equal=True,ocr_scan_only=True,invalid_candidate_repaired=True,replay_without_calls=True,export_loss_rejected=loss_rejected,cell_move_rejected=cell_move_rejected,local_model_calls=False,
                 native_cache_resume=dict(seconds=round(resume_seconds,3),cache_hit=True,model_requests=0,model_loads=0,text_and_geometry_equal=True,rendered_pixels_equal=True),cold_performance=cold_performance))
             print(json.dumps(read(work/'result.json'),ensure_ascii=False))

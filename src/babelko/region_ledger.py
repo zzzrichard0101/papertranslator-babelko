@@ -170,7 +170,7 @@ class RegionLedger:
                 row['glyphs']=[dict(text=c.char_unicode,box=box(c.box)) for c in characters(paragraph.pdf_paragraph_composition)]
         save(self.folder/'region-ledger.json',dict(revision=REVISION,source_sha256=self.source_sha256,regions=self.rows,unmapped=self.unknown))
 
-    def inspect(self,path,selected,source_path=None,restored_index_pages=None):
+    def inspect(self,path,selected,source_path=None,restored_index_pages=None,save_report=True):
         issues=[];checked=0;glyph_count=0
         if self.unknown:issues.append(dict(code='unmapped_translation',count=len(self.unknown)))
         page_map={source+1:target for target,source in enumerate(selected)}
@@ -284,7 +284,8 @@ class RegionLedger:
             preserved_references=sum(r['policy']=='preserved_reference' for r in self.rows),
             pixel_verified_index_pages=sorted(verified_index),issues=issues,
             scope='Analyzed source occurrences, replay, typeset text counts and per-glyph PDF positions; restored index pages require exact source pixels. Not OCR recall, reading order or semantic certification.')
-        save(self.folder/'region-coverage.json',report);return report
+        if save_report:save(self.folder/'region-coverage.json',report)
+        return report
 
 
 @contextmanager
