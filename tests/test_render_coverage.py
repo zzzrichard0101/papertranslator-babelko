@@ -44,3 +44,16 @@ def test_one_phrase_cannot_pay_for_two_occurrences_even_with_a_title_prefix(tmp_
         p=doc.new_page();p.insert_text((30,50),'연구보고서 '+title,fontname='korea');doc.save(pdf)
     save(tracker,dict(page=[dict(paragraph=[dict(pdf_unicode='Title',input='Title',output='연구보고서 '+title),dict(pdf_unicode='Header',input='Header',output=title)])]))
     assert inspect(pdf,tracker)['status']=='failed'
+
+
+def test_individually_drawn_korean_glyphs_reconstruct_visual_row(tmp_path):
+    pdf=tmp_path/'glyphs.pdf';tracker=tmp_path/'tracking.json'
+    text='지침서의 배경 및 개발 과정'
+    with fitz.open() as doc:
+        page=doc.new_page();x=30
+        for char in text:
+            page.insert_text((x,50),char,fontname='korea',fontsize=10)
+            x+=12 if char!=' ' else 6
+        doc.save(pdf)
+    save(tracker,dict(page=[dict(pdf_unicode='Background',input='Background',output=text)]))
+    assert inspect(pdf,tracker)['status']=='passed'

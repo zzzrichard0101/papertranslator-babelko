@@ -130,3 +130,23 @@ def test_preserved_pixel_tolerance_accepts_edge_noise_but_rejects_lost_ink():
     assert pixels_preserved(NS(width=100,height=100,samples=original),NS(width=100,height=100,samples=noisy))
     missing=bytes([255]*60+[0]*640+[255]*9300)
     assert not pixels_preserved(NS(width=100,height=100,samples=original),NS(width=100,height=100,samples=missing))
+
+
+def test_cropbox_excludes_hidden_spread_and_rebases_visible_glyphs(tmp_path):
+    source=tmp_path/'source.pdf';output=tmp_path/'output.pdf'
+    with fitz.open() as pdf:
+        page=pdf.new_page(width=600,height=800)
+        page.insert_text((130,100),'Visible',fontsize=12)
+        page.set_cropbox(fitz.Rect(100,0,500,800))
+        pdf.save(source)
+    output.write_bytes(source.read_bytes())
+    with fitz.open(output) as pdf:
+        chars=[c for b in pdf[0].get_text('rawdict')['blocks'] for line in b.get('lines',[])
+            for span in line.get('spans',[]) for c in span.get('chars',[])]
+    visible=row('visible',1,130,690,'Visible')
+    visible['glyphs']=[dict(text=c['c'],box=[c['bbox'][0]+100,800-c['bbox'][3],
+        c['bbox'][2]+100,800-c['bbox'][1]]) for c in chars]
+    hidden=row('hidden',1,30,690,'Hidden')
+    ledger=RegionLedger(tmp_path);ledger.rows=[visible,hidden]
+    result=ledger.inspect(output,[0],source)
+    assert result['status']=='passed' and result['checked_regions']==1

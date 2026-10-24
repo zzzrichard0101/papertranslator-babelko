@@ -20,6 +20,13 @@ def box(value):
     return [round(float(getattr(value,k)),4) for k in ('x','y','x2','y2')]
 
 
+def visible_in_crop(source_box,page):
+    """IL boxes use media-box bottom-left coordinates; CropBox is top-left."""
+    if not source_box:return True
+    x0,y0,x1,y1=source_box;crop=page.cropbox;height=page.mediabox.height
+    return x1>crop.x0 and x0<crop.x1 and y1>height-crop.y1 and y0<height-crop.y0
+
+
 def pixels_preserved(original,rendered):
     if original.width!=rendered.width or original.height!=rendered.height:return False
     if original.samples==rendered.samples:return True
@@ -194,6 +201,8 @@ class RegionLedger:
               for row in self.rows:
                 page_index=page_map.get(row['source_page'])
                 if page_index is None:continue
+                source_page=source_pdf[row['source_page']-1] if source_pdf is not None else pdf[page_index]
+                if not visible_in_crop(row['source_box'],source_page):continue
                 self.relink_saved_row(row)
                 problems=[];target=row['target'];glyphs=row.get('glyphs',[])
                 if row['policy']=='translate':
@@ -208,7 +217,7 @@ class RegionLedger:
                 produced=canonical(''.join(g['text'] for g in glyphs))
                 if collections.Counter(expected)-collections.Counter(produced):problems.append('typeset_text_missing')
                 missing=0;needed=0
-                page=pdf[page_index];height=page.mediabox.height
+                page=pdf[page_index];height=page.mediabox.height;crop=page.cropbox
                 preserved_pixels=False
                 if (source_pdf is not None and
                         (row['policy']=='preserved_figure' or row['role'] in {'abandon','fallback_line'})
@@ -217,12 +226,12 @@ class RegionLedger:
                     # directly comparable with extraction boxes. Demand exact
                     # pixel preservation of that source region instead.
                     x0,y0,x1,y1=row['source_box']
-                    clip=fitz.Rect(x0-2,height-y1-2,x1+2,height-y0+2)
+                    clip=fitz.Rect(x0-crop.x0-2,height-y1-crop.y0-2,x1-crop.x0+2,height-y0-crop.y0+2)
                     original=source_pdf[row['source_page']-1].get_pixmap(clip=clip,colorspace=fitz.csGRAY,alpha=False)
                     rendered=page.get_pixmap(clip=clip,colorspace=fitz.csGRAY,alpha=False)
                     preserved_pixels=pixels_preserved(original,rendered)
                 for glyph in ([] if preserved_pixels else glyphs):
-                    x0,y0,x1,y1=glyph['box'];x=(x0+x1)/2;y=height-(y0+y1)/2
+                    x0,y0,x1,y1=glyph['box'];x=(x0+x1)/2-crop.x0;y=height-(y0+y1)/2-crop.y0
                     # PDF extraction boxes are font ascenders, while the IL
                     # boxes are advance-height boxes. The baseline offset can
                     # exceed two points for small chart labels, even when the

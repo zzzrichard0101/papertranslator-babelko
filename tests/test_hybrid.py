@@ -323,6 +323,21 @@ def test_dense_style_batches_allow_numeric_phrase_to_cross_style_boundary():
     assert not number_errors(source,target)
 
 
+def test_leading_bullet_is_preserved_without_treating_it_as_a_count():
+    t=object.__new__(HybridTranslator)
+    calls=[]
+    def request(messages):
+        calls.append(json.loads(messages[1]['content'])['SOURCE'])
+        return '의뢰부터 첫 면담까지, 평가부터 치료 시작까지 걸리는 시간.'
+    t._request=request
+    source='{v1}times between referral and first meeting, and assessment and beginning therapy.'
+    target=t.protected_translation(source,dict(context='',formula_hints={'{v1}':'•'}),numeric_failure=False)
+    assert target=='{v1}의뢰부터 첫 면담까지, 평가부터 치료 시작까지 걸리는 시간.'
+    assert calls==[source[len('{v1}'):]]
+    assert errors(source,'{v1}의뢰와 첫 만남 사이의 횟수')
+    assert not errors(source,target)
+
+
 def test_cancelled_draft_makes_no_request_or_checkpoint(tmp_path):
     t=object.__new__(HybridTranslator);t.cancel=lambda:True
     with pytest.raises(InterruptedError):t.unit('The value is 24.','text','')

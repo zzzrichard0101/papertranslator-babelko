@@ -107,7 +107,9 @@ def revalidate_saved_output(folder,state,progress):
     state['status']='validating';progress('저장된 PDF 재검증',98)
     extracted=[];checks=inspect_output(out/'Korean.pdf',state['selected'],extracted,folder/'Original.pdf')
     tracked=tracking_status(tracker)
-    rendered=inspect_rendered(out/'Korean.pdf',tracker,extracted)
+    ledger_path=folder/'region-ledger.json'
+    rendered=inspect_rendered(out/'Korean.pdf',tracker,extracted,folder/'Original.pdf',
+        ledger_path if ledger_path.is_file() else None,state['selected'])
     regions=None
     if state.get('snapshot',{}).get('experimental_pipeline'):
         from .region_ledger import RegionLedger,REVISION as REGION_REVISION
@@ -174,10 +176,17 @@ def run(folder):
     state.update(pid=os.getpid(),process_created=psutil.Process().create_time())
     from .performance import Performance,StateWriter
     performance=Performance(folder);state_writer=StateWriter(folder/'state.json')
+    progress_lock=threading.RLock()
+    selected_positions={page+1:index+1 for index,page in enumerate(state.get('selected',[]))}
     def progress(message,percent=None):
-        state.update(stage=message,elapsed_seconds=round(time.perf_counter()-began,2))
-        if percent is not None:state['progress']=max(state.get('progress',0),percent)
-        performance.stage(message);state_writer.write(state)
+        with progress_lock:
+            state.update(stage=message,elapsed_seconds=round(time.perf_counter()-began,2))
+            if percent is not None:state['progress']=max(state.get('progress',0),percent)
+            if message!=state.get('native_stage'):
+                state.pop('native_stage',None)
+                state.pop('stage_current',None)
+                state.pop('stage_total',None)
+            performance.stage(message);state_writer.write(state)
     cancel=lambda:(folder/'cancel').exists()
     try:
         if cancel():raise InterruptedError('취소됨')
@@ -257,6 +266,8 @@ def run(folder):
                     translator.model=target.model['id'];bound[0]=target
             translator.before_request=before_request
             def switch_to_editor():
+                with progress_lock:
+                    state['work_phase']='review';state['current_source_pages']=[]
                 progress('초벌 저장 완료 · Qwen 교정 모델 준비')
                 engine.close()
                 snapshot={**state['snapshot'],'model':state['snapshot']['editor']}
@@ -270,7 +281,38 @@ def run(folder):
             config.translator=translator;config.term_extraction_translator=translator;config.working_dir=folder/'intermediate';config.working_dir.mkdir(exist_ok=True);config._is_temp_dir=False
             config.add_formula_placehold_hint=True
             # Keep original labels and geometry; no diagnostic boxes in user PDFs.
-            from .progress import translate
+            from .progress import translate,track_translation_pages
+            state['work_phase']='draft' if state['mode']=='hybrid' else 'translate'
+            state['current_source_pages']=[]
+            def native_event(event):
+                with progress_lock:
+                    stage=event.get('stage','번역 중')
+                    state['native_stage']=stage
+                    state['stage_current']=event.get('stage_current',0)
+                    state['stage_total']=event.get('stage_total',0)
+                    if stage=='Translate Paragraphs':
+                        state['work_phase']=getattr(translator,'phase','translate')
+                    else:
+                        state['current_source_pages']=[]
+            active_pages={};reported_phases=set()
+            def current_pages(event,pages):
+                pages=[page for page in pages if page in selected_positions]
+                with progress_lock:
+                    for page in pages:
+                        active_pages[page]=active_pages.get(page,0)+(1 if event=='start' else -1)
+                        if active_pages[page]<=0:active_pages.pop(page,None)
+                    showing=sorted(active_pages,key=selected_positions.get)
+                    if state.get('current_source_pages')==showing:return
+                    state['current_source_pages']=showing
+                    phase=getattr(translator,'phase','translate')
+                    state['work_phase']=phase
+                    state['elapsed_seconds']=round(time.perf_counter()-began,2)
+                    first_page=bool(showing) and phase not in reported_phases
+                    if first_page:reported_phases.add(phase)
+                    # The UI polls once a second; avoid fsync on every quick batch.
+                    # Keep the last page until the next stage replaces it.
+                    if event=='start' or showing:
+                        state_writer.write(state,force=first_page)
             def layout_progress(message,percent=None):
                 if percent is not None and state['mode']=='hybrid' and percent>=39:
                     if translator.phase=='draft':percent=39+(min(percent,85.5)-39)*21/46.5
@@ -281,8 +323,8 @@ def run(folder):
                 from .figure_legends import preserve as preserve_figures
                 from .layout_cache import native_layout_cache
                 from .region_ledger import capture as capture_regions
-                with preserve_references(folder),preserve_figures(folder),staged_layout(translator,switch_to_editor,progress) if state['mode']=='hybrid' else nullcontext(),native_layout_cache(folder,input_pdf,config,progress,performance),capture_regions(translator.region_ledger) if translator.experimental_pipeline else nullcontext():
-                    result=translate(config,layout_progress,cancel,lambda:[e.close() for e in active])
+                with preserve_references(folder),preserve_figures(folder),staged_layout(translator,switch_to_editor,progress) if state['mode']=='hybrid' else nullcontext(),native_layout_cache(folder,input_pdf,config,progress,performance),capture_regions(translator.region_ledger) if translator.experimental_pipeline else nullcontext(),track_translation_pages(current_pages):
+                    result=translate(config,layout_progress,cancel,lambda:[e.close() for e in active],on_event=native_event)
                 if cancel():raise InterruptedError('취소됨')
                 if result is None or not result.mono_pdf_path:raise RuntimeError('번역 PDF 생성 결과가 없습니다.')
                 out=Path(state['destination'])/(state['title'][:90]+' - BabelKO '+state['id'][:8]);
@@ -292,7 +334,7 @@ def run(folder):
                 with performance.measure('figures.legend'):
                     figure_report=export_figure_legends(folder,out,input_pdf,translator)
             finally:translator.client.close()
-            state['status']='validating';progress('원문 대응·한국어 PDF 검사',98)
+            state['status']='validating';state['current_source_pages']=[];progress('원문 대응·한국어 PDF 검사',98)
             from .pdf_preservation import optimize
             with performance.measure('export.optimize'):
                 shutil.copyfile(folder/'Original.pdf',out/'Original.pdf');optimize(result.mono_pdf_path,out/'Korean.pdf')
@@ -308,7 +350,9 @@ def run(folder):
             with performance.measure('validation.pdf'):
                 extracted_pages=[];checks=inspect_output(out/'Korean.pdf',state['selected'],extracted_pages,folder/'Original.pdf')
                 tracked=tracking_status(config.working_dir/'translate_tracking.json')
-                rendered=inspect_rendered(out/'Korean.pdf',config.working_dir/'translate_tracking.json',extracted_pages)
+                ledger_path=folder/'region-ledger.json'
+                rendered=inspect_rendered(out/'Korean.pdf',config.working_dir/'translate_tracking.json',extracted_pages,
+                    folder/'Original.pdf',ledger_path if ledger_path.is_file() else None,state['selected'])
                 regions=translator.region_ledger.inspect(out/'Korean.pdf',state['selected'],folder/'Original.pdf') if translator.experimental_pipeline else None
             if regions and regions['status']!='passed':
                 checks['status']='failed';checks['issues'].append(dict(code='spatial_region_missing',detail=regions))
@@ -321,10 +365,16 @@ def run(folder):
             if figure_report['status']!='passed':
                 checks['status']='failed';checks['issues'].append(dict(code='figure_legend_incomplete',
                     count=len(figure_report['unresolved_labels'])))
+            toc_path=folder/'source-toc-detection.json'
+            toc=read(toc_path) if toc_path.is_file() else {}
+            if toc.get('status')=='incomplete':
+                checks['status']='failed';checks['issues'].append(dict(code='toc_layout_incomplete',
+                    pages=toc.get('unresolved_pages',[])))
             report=dict(protocol=state['protocol'],ocr_revision=state['ocr_revision'],engine='PDFMathTranslate-next + BabelDOC',upstream=state['upstream'],source_sha256=state['source_sha256'],selected_source_pages=[i+1 for i in state['selected']],
                 translation_tracking=tracked,rendered_prose=rendered,assets=asset_report,ocr_source_pages=[i+1 for i in state.get('ocr_pages',[])],checks=checks,requests=translator.requests,retries=translator.retries,translation_calls=translator.translate_call_count,cache_hits=translator.translate_cache_call_count,
                 unresolved_translation_failures=translator.hard_failures,semantic_accuracy='not_certified',manually_edited_targets=0,seconds=time.perf_counter()-began)
             report.update(mode=state['mode'],hybrid=getattr(translator,'stats',None),figures=figure_report)
+            if toc:report['toc_structure']={key:toc.get(key) for key in ('revision','status','selected_pages','unresolved_pages','restored_paragraphs')}
             if translator.experimental_pipeline:
                 report.update(region_coverage=regions,document_context=translator.document_context.report())
             report['performance']=performance.snapshot()

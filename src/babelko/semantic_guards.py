@@ -5,7 +5,7 @@ unit is returned to the local editor with its complete source and context.
 """
 import re
 
-REVISION='technical-contradictions-6'
+REVISION='technical-contradictions-7'
 STYLE=re.compile(r"<style\s+id=['\"]\d+['\"]>|</style>")
 OPEN_STYLE=re.compile(r"<style\s+id=['\"]\d+['\"]>")
 TOKEN=re.compile(r'\{v\d+\}')
@@ -25,6 +25,9 @@ def errors(source,target):
     source=STYLE.sub('',source)
     target=STYLE.sub('',target)
     found=nesting
+    if (re.search(r'\btimes? between\b',source,re.I)
+            and re.search(r'횟수|(?:\d|\{v\d+\})\s*회(?:의|를|가|는|에)?',target)):
+        found.append('시간 간격 오역: times between 두 사건은 발생 횟수가 아니라 그 사이에 걸리는 시간입니다.')
     if re.search(r'\bnon[ -]?increasing\b',source,re.I) and not re.search(r'\bnon[ -]?decreasing\b',source,re.I):
         if re.search(r'단조\s*비\s*감소|감소하지\s*않|증가하거나\s*일정',target):
             found.append('방향 반전: non-increasing은 비증가/단조 감소이며 비감소가 아닙니다.')

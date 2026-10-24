@@ -591,6 +591,24 @@ class HybridTranslator(KoreanTranslator):
         spine=NUMBER_SPINE if numeric_failure and len(NUMBER_SPINE.findall(source))<=32 else PLACEHOLDER
         tokens=spine.findall(source);parts=spine.split(source)
         if not tokens:raise ValueError('보호할 원문 토큰이 없습니다.')
+        if (len(tokens)==1 and not parts[0].strip() and
+                record.get('formula_hints',{}).get(tokens[0]) in {'•','◦','▪','●','‣','⁃'}):
+            # A leading list bullet is punctuation, not a numerical slot.
+            # Translating the prose on its own avoids fragile two-element JSON
+            # responses and prevents the model from reading {v1} as a count.
+            body=self._request([dict(role='system',content=(
+                'Translate SOURCE as one complete Korean list item. The preceding bullet is inserted by the program. '
+                'Do not output a bullet, a placeholder, a count for the bullet, or any surrounding commentary. '
+                'Preserve the meaning of every clause. In "times between event A and event B", "times" means elapsed waiting times, '
+                'never the number of occurrences or sessions.')),
+                dict(role='user',content=json.dumps(dict(SOURCE=parts[1],CONTEXT=record.get('context',''),
+                    REPAIR_FEEDBACK=feedback or []),ensure_ascii=False))])
+            # Some local models echo the supplied bullet placeholder despite
+            # the instruction. Remove only this exact one; other placeholders
+            # still indicate a malformed translation.
+            if body.count(tokens[0])==1:body=body.replace(tokens[0],'',1)
+            if PLACEHOLDER.search(body):raise ValueError('목록 글머리표 번역에 자리표시자가 포함됨')
+            return tokens[0]+body.lstrip('•◦▪●‣⁃ ')
         if len(parts)>20:
             # Do not ask the model to fill dozens of mostly-empty slots in one
             # JSON array. Long styled paragraphs can otherwise degenerate into
@@ -895,6 +913,10 @@ def prepare_layout(docs,folder,repairs,input_pdf=None):
     for key,value in boundary.items():repairs.setdefault(key,{}).update(value)
     save(folder/'source-cross-boundary-repairs.json',boundary)
     save(folder/'source-word-repairs.json',repairs)
+    from .toc_layout import split_rows
+    toc_diagnostics={}
+    save(folder/'source-toc-rows.json',split_rows(docs,toc_diagnostics))
+    save(folder/'source-toc-detection.json',toc_diagnostics)
 
 
 def snapshot_pages(pages):
