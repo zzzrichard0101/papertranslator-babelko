@@ -258,6 +258,24 @@ th{{background:#eaf1f5;position:sticky;top:0}}tr:hover{{background:#f2f8fa}}.not
     return report
 
 
+def finished(report):
+    return report['total'] == 30 and all(
+        row['status'] == 'completed' or
+        (row['status'] in {'failed', 'partial'} and row['attempts'] >= 2)
+        for row in report['rows'])
+
+
+def stop_completed_schedule(base, report):
+    if not finished(report) or base.resolve() != DEFAULT_BASE.resolve():
+        return
+    command = ("Get-ScheduledTask -TaskName 'PaperTranslator-BabelKO-Diverse30',"
+               "'PaperTranslator-BabelKO-Diverse30-Report' -ErrorAction SilentlyContinue "
+               "| Disable-ScheduledTask | Out-Null")
+    subprocess.run(['powershell', '-NoProfile', '-Command', command], check=True,
+                   capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    print('Benchmark finished; both local scheduled tasks disabled.', flush=True)
+
+
 def run(base, once=False):
     from babelko.pipeline import create
 
@@ -310,7 +328,8 @@ def run(base, once=False):
         print(f'{case["key"]}: {state["status"]}; completed {report["completed"]}/30', flush=True)
         if once:
             break
-    summarize(base)
+    report = summarize(base)
+    stop_completed_schedule(base, report)
 
 
 def main():

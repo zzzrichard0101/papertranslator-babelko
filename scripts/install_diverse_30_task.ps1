@@ -18,3 +18,11 @@ $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhen
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description 'Local, checkpointed 30-paper translation benchmark. Results remain in ignored test_vault.' -Force | Out-Null
 Start-ScheduledTask -TaskName $taskName
 Get-ScheduledTask -TaskName $taskName | Select-Object TaskName, State
+$reportName = 'PaperTranslator-BabelKO-Diverse30-Report'
+$reportArguments = '-u "' + $runner + '" report --base "' + $Corpus + '"'
+$reportAction = New-ScheduledTaskAction -Execute $python -Argument $reportArguments -WorkingDirectory $repo
+$reportTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(3) -RepetitionInterval (New-TimeSpan -Minutes 10) -RepetitionDuration (New-TimeSpan -Days 3650)
+$reportSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+Register-ScheduledTask -TaskName $reportName -Action $reportAction -Trigger $reportTrigger -Settings $reportSettings -Description 'Refresh the local 30-paper progress report without using a model.' -Force | Out-Null
+Start-ScheduledTask -TaskName $reportName
+Get-ScheduledTask -TaskName $reportName | Select-Object TaskName, State

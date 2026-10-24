@@ -62,3 +62,10 @@ def test_previous_sources_are_excluded_by_id_and_hash(tmp_path, monkeypatch):
     ids, hashes = corpus.previous_ids_and_hashes(tmp_path / 'test_vault' / 'new')
     assert '2412.12345' in ids
     assert corpus.digest(original) in hashes
+
+
+def test_schedule_only_stops_after_every_case_is_terminal():
+    rows = [dict(status='completed', attempts=1) for _ in range(29)]
+    assert not corpus.finished(dict(total=30, rows=rows + [dict(status='queued', attempts=0)]))
+    assert not corpus.finished(dict(total=30, rows=rows + [dict(status='failed', attempts=1)]))
+    assert corpus.finished(dict(total=30, rows=rows + [dict(status='partial', attempts=2)]))
