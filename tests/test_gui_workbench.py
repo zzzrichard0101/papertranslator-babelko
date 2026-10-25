@@ -108,3 +108,55 @@ def test_workbench_displays_actual_page_and_review_progress(monkeypatch,tmp_path
     finally:
         window.close()
         app.processEvents()
+
+
+def test_particle_atlas_navigation_uses_local_pdf_blocks(monkeypatch,tmp_path):
+    import pymupdf
+    from babelko.storage import save
+
+    monkeypatch.setenv("BABELKO_HOME",str(tmp_path))
+    source=tmp_path/"source.pdf"
+    with pymupdf.open() as document:
+        document.new_page().insert_text((50,70),"First page source paragraph.")
+        document.new_page().insert_text((70,90),"Second page source paragraph.")
+        document.save(source)
+    app=QApplication.instance() or QApplication([])
+    window=Window()
+    try:
+        window.setForm("source",str(source))
+        navigation=window._window.findChild(QObject,"atlasNavigation")
+        assert navigation is not None
+        assert QMetaObject.invokeMethod(navigation,"clicked")
+        assert window._window.property("page")==3
+        assert window.atlas["total_pages"]==2
+        assert window.atlas["regions"][0]["status"]=="unprocessed"
+        window.selectAtlasPage(1)
+        assert window.atlas["source_page"]==2
+        window.selectAtlasRegion(0)
+        assert "Second page" in window.atlasSelection["excerpt"]
+
+        job=tmp_path/"jobs"/"saved"
+        job.mkdir(parents=True)
+        (job/"Original.pdf").write_bytes(source.read_bytes())
+        save(job/"source-coverage.json",{"pages":[{"source_page":2,"suspected_missing":[
+            {"box":[60,70,380,110]}]}]})
+        window.folder=job
+        window._job_source=str(source)
+        window.selectAtlasPage(1)
+        assert window.atlas["suspect_regions"]==1
+        assert window.atlas["regions"][0]["status"]=="source_gap_suspected"
+
+        output=job/"result"
+        output.mkdir()
+        (output/"Korean.pdf").write_bytes(source.read_bytes())
+        save(job/"state.json",{"status":"completed","selected":[0],
+                               "source":str(source),"output":str(output)})
+        window.refresh()
+        window.selectAtlasPage(0)
+        assert window.atlas["regions"][0]["status"]=="output_created"
+        assert window.atlas["translated_available"] is True
+        window.selectAtlasPage(1)
+        assert window.atlas["translated_available"] is False
+    finally:
+        window.close()
+        app.processEvents()

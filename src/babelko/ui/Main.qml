@@ -160,6 +160,15 @@ ApplicationWindow {
                     night: root.night; accent: root.accent; uiScale: root.uiScale
                     onClicked: root.page = 1
                 }
+                Item { Layout.preferredHeight: 9 }
+                UiButton {
+                    objectName: "atlasNavigation"
+                    Layout.fillWidth: true
+                    label: "문서 우주"; symbol: "✦"
+                    selected: root.page === 3
+                    night: root.night; accent: root.accent; uiScale: root.uiScale
+                    onClicked: { root.page = 3; backend.showAtlas() }
+                }
 
                 Rectangle { Layout.fillWidth: true; Layout.topMargin: 26; height: 1; color: root.line }
                 Text {
@@ -222,13 +231,14 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 3
                     Text {
-                        text: root.page === 2 ? "화면 설정" : root.page === 1 ? "결과 확인" : "번역 작업실"
+                        text: root.page === 3 ? "문서 우주" : root.page === 2 ? "화면 설정" : root.page === 1 ? "결과 확인" : "번역 작업실"
                         color: root.ink
                         font.pixelSize: 22 * root.uiScale
                         font.weight: Font.Bold
                     }
                     Text {
-                        text: root.page === 2 ? "읽는 경험을 취향에 맞게 조정하세요" :
+                        text: root.page === 3 ? "PDF의 구조와 번역 상태를 살아 있는 지도로 탐색하세요" :
+                              root.page === 2 ? "읽는 경험을 취향에 맞게 조정하세요" :
                               root.page === 1 ? "원문과 번역 결과를 이어서 살펴보세요" :
                               "문서를 그대로 읽고, 한국어로 다시 만듭니다"
                         color: root.muted
@@ -655,6 +665,11 @@ ApplicationWindow {
                         }
                         UiButton { Layout.alignment: Qt.AlignRight; label: "기본값으로 되돌리기"; night: root.night; accent: root.accent; uiScale: root.uiScale; onClicked: backend.resetSettings() }
                     }
+                }
+
+                ParticleAtlas {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
                 }
             }
         }

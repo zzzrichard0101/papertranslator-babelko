@@ -17,6 +17,7 @@ from PySide6.QtQuick import QQuickWindow
 from PySide6.QtWidgets import QApplication, QFileDialog
 
 from .pipeline import create
+from .particle_atlas import snapshot as atlas_snapshot
 from .storage import project, read, root, save
 from .ui_settings import DEFAULTS, load as load_settings, store as store_settings
 
@@ -98,6 +99,7 @@ class Window(QObject):
     formChanged = Signal()
     jobChanged = Signal()
     previewsChanged = Signal()
+    atlasChanged = Signal()
     errorRaised = Signal(str)
 
     def __init__(self):
@@ -127,6 +129,10 @@ class Window(QObject):
         self.worker = None
         self._job_source = ""
         self._preview_output = None
+        self._atlas = {"source_page": 0, "total_pages": 0, "regions": []}
+        self._atlas_preview = ""
+        self._atlas_selection = {}
+        self._atlas_refresh_state = None
         self._load_last_job()
         self._load_fonts()
         self.engine = QQmlApplicationEngine()
@@ -189,6 +195,98 @@ class Window(QObject):
     def koreanPreview(self):
         return self._korean_preview
 
+    @Property("QVariantMap", notify=atlasChanged)
+    def atlas(self):
+        return self._atlas
+
+    @Property(str, notify=atlasChanged)
+    def atlasPreview(self):
+        return self._atlas_preview
+
+    @Property("QVariantMap", notify=atlasChanged)
+    def atlasSelection(self):
+        return self._atlas_selection
+
+    @Slot()
+    def showAtlas(self):
+        if not self._atlas.get("source_page"):
+            self.selectAtlasPage(0)
+
+    @Slot(int)
+    def selectAtlasPage(self, page):
+        source = Path(self._form["source"])
+        if not source.is_file() or source.suffix.lower() != ".pdf":
+            self._atlas = {"source_page": 0, "total_pages": 0, "regions": []}
+            self._atlas_preview = ""
+            self._atlas_selection = {}
+            self.atlasChanged.emit()
+            return
+        coverage = {}
+        report_mtime = 0
+        selected_pages = None
+        translated_pages = set()
+        processing_pages = set()
+        if self.folder and self._job_source and source.resolve() == Path(self._job_source).resolve():
+            try:
+                state = read(self.folder / "state.json")
+                selected_pages = {index + 1 for index in state.get("selected", [])
+                                  if type(index) is int and index >= 0}
+                processing_pages = {index for index in state.get("current_source_pages", [])
+                                    if type(index) is int and index > 0}
+                if self._job["hasKorean"] and self._job["status"] in {"completed", "partial"}:
+                    translated_pages = selected_pages.copy()
+            except (OSError, ValueError, TypeError):
+                pass
+            try:
+                original = self.folder / "Original.pdf"
+                if source.stat().st_size == original.stat().st_size:
+                    report = self.folder / "source-coverage.json"
+                    if report.is_file():
+                        coverage = read(report)
+                        report_mtime = report.stat().st_mtime_ns
+            except (OSError, ValueError, TypeError):
+                pass
+        try:
+            self._atlas = atlas_snapshot(source, page, coverage=coverage,
+                                         selected_pages=selected_pages,
+                                         translated_pages=translated_pages,
+                                         processing_pages=processing_pages)
+            self._atlas["translated_available"] = page + 1 in translated_pages
+            self._atlas_preview = _preview(source, page)
+        except (OSError, RuntimeError, ValueError):
+            return
+        self._atlas_selection = {}
+        self._atlas_refresh_state = (self._job["status"], self._job["hasKorean"],
+                                     report_mtime, frozenset(processing_pages))
+        self.atlasChanged.emit()
+
+    @Slot(int)
+    def selectAtlasRegion(self, index):
+        regions = self._atlas.get("regions", [])
+        if 0 <= index < len(regions):
+            self._atlas_selection = regions[index]
+            self.atlasChanged.emit()
+
+    @Slot(bool)
+    def openAtlasPage(self, translated=False):
+        page = self._atlas.get("source_page", 0)
+        if not page:
+            return
+        path = Path(self._form["source"])
+        if translated and self.folder:
+            try:
+                state = read(self.folder / "state.json")
+                output = Path(state["output"])
+                selected = state["selected"]
+                page = selected.index(page - 1) + 1
+                path = output / "Korean.pdf"
+            except (OSError, ValueError, KeyError, TypeError):
+                return
+        if path.is_file():
+            url = QUrl.fromLocalFile(str(path))
+            url.setFragment(f"page={page}")
+            QDesktopServices.openUrl(url)
+
     @Slot(str, "QVariant")
     def setSetting(self, key, value):
         if key not in DEFAULTS:
@@ -240,6 +338,11 @@ class Window(QObject):
         self._form[key] = value
         self.formChanged.emit()
         if key == "source":
+            self._atlas = {"source_page": 0, "total_pages": 0, "regions": []}
+            self._atlas_preview = ""
+            self._atlas_selection = {}
+            self._atlas_refresh_state = None
+            self.atlasChanged.emit()
             self._update_source_preview()
 
     @Slot(str)
@@ -404,6 +507,17 @@ class Window(QObject):
                         self.previewsChanged.emit()
                     except (OSError, RuntimeError, ValueError):
                         pass
+        report = self.folder / "source-coverage.json"
+        try:
+            report_mtime = report.stat().st_mtime_ns if report.is_file() else 0
+        except OSError:
+            report_mtime = 0
+        processing_pages = frozenset(index for index in state.get("current_source_pages", [])
+                                     if type(index) is int and index > 0)
+        if (self._atlas.get("source_page") and
+                self._atlas_refresh_state != (self._job["status"], self._job["hasKorean"],
+                                              report_mtime, processing_pages)):
+            self.selectAtlasPage(self._atlas["source_page"] - 1)
 
     @Slot(str)
     def openResult(self, name):
