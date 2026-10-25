@@ -4,7 +4,7 @@ import pymupdf as fitz
 from .storage import read
 
 TOKENS=re.compile(r"\{v\d+\}|<style\s+id=['\"]\d+['\"]>|</style>")
-REVISION='short-exact-1'
+REVISION='short-exact-2'
 
 
 def canonical(text):
@@ -76,8 +76,11 @@ def short_evidence(page_text,spatial_pages,long_parts,short_parts):
     for page,value in sorted(long_parts,key=order):
         for view in views:view.reserve(value,page)
     results=[False]*len(short_parts)
+    # A one-syllable page-local fragment must not consume the only occurrence
+    # of a longer cross-page phrase before that phrase gets matched. Prefer
+    # specific evidence first; use page scope only to break equal-length ties.
     for ordinal,(index,page,value) in sorted(enumerate(short_parts),
-            key=lambda item:(item[1][1] is None,-len(item[1][2]))):
+            key=lambda item:(-len(item[1][2]),item[1][1] is None)):
         # Reserve the same evidence in both alternative extraction orders.
         results[ordinal]=any([view.reserve(value,page) for view in views])
     return results

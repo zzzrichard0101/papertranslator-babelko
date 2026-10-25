@@ -39,6 +39,10 @@ def test_uppercase_multiword_label_is_meaningful_but_panel_and_acronym_are_not()
         assert not explanatory_label(source)
     assert explanatory_label('Patient outcome')
     assert explanatory_label('Natural')
+    for source in ['[keV]E','pro',']m DFP [m','×108 protons','S1: 70.51 MeV',
+                   '(dB) R SN ered Recov','GCC Bug #117128']:
+        assert not explanatory_label(source)
+    assert explanatory_label('Improved patient care')
 
 
 def test_preserve_filters_only_figure_interior(tmp_path,monkeypatch):
@@ -128,3 +132,16 @@ def test_untranslatable_single_figure_label_stays_unresolved():
     translated,errors=translate_labels(figures,Translator())
     assert translated=={'Control group':'대조군'}
     assert 'Bad label' in errors
+
+
+def test_failed_single_figure_label_gets_one_focused_local_retry():
+    figures=[dict(labels=[dict(source='Natural',explanatory=True)])]
+    class Translator:
+        calls=0
+        def _request(self,messages,schema):
+            self.calls+=1
+            output='Natural' if self.calls==1 else '자연적'
+            return json.dumps([dict(id=0,output=output)],ensure_ascii=False)
+    translator=Translator();translated,failures=translate_labels(figures,translator)
+    assert translator.calls==2
+    assert translated=={'Natural':'자연적'} and not failures

@@ -1,5 +1,5 @@
 import pymupdf as fitz
-from babelko.render_coverage import inspect
+from babelko.render_coverage import inspect,short_evidence
 from babelko.storage import save
 
 
@@ -93,3 +93,10 @@ def test_long_sentence_cannot_also_pay_for_a_missing_short_unit(tmp_path):
         dict(pdf_unicode='Short',input='Short',output='비활성화')])]))
     result=inspect(pdf,tracker)
     assert result['status']=='failed' and result['missing_short_fragments']==1
+
+
+def test_long_cross_page_fragment_reserves_before_one_syllable_page_fragment():
+    pages=['우변에서는다른대상에는']
+    short=[(0,0,'는'),(1,None,'우변에서는')]
+    assert short_evidence(pages,pages,[],short)==[True,True]
+    assert short_evidence(['우변에서는'],['우변에서는'],[],short)==[False,True]
