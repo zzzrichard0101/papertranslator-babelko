@@ -1,7 +1,7 @@
 import json,threading
 from unittest.mock import patch
 import pytest
-from babelko.hybrid import errors,apply_patches,HybridTranslator,context_hints,split_source,NUMBER_SPINE,auditable_issues,record_errors,override_fingerprint,VALIDATION_POLICY_REVISION
+from babelko.hybrid import errors,apply_patches,HybridTranslator,context_hints,split_source,NUMBER_SPINE,auditable_issues,record_errors,override_fingerprint,VALIDATION_POLICY_REVISION,retry_feedback
 from babelko.translator import validate_items
 from types import SimpleNamespace
 
@@ -63,6 +63,18 @@ def test_model_repeating_a_long_styled_translation_is_rejected():
     assert '번역문 앞부분 반복' in errors(source,doubled)
     assert '번역문 앞부분 반복' not in errors(source,
         "<style id='1'>Dip 외</style><style id='3'>: 공간 학습을 이용한 설명 가능한 다중 헤드 어텐션 기반 프레임워크</style>")
+
+
+def test_retry_feedback_preserves_valid_korean_month_numeral():
+    source='The event happened on February 3.'
+    translated='이 사건은 2월 3일에 발생했다.'
+    feedback=retry_feedback(source,translated,'서식 태그 순서 오류')
+    assert '"numeric_equivalence_passed": true' in feedback
+    assert 'Keep those quantities unchanged' in feedback
+    assert '"raw_extra"' not in feedback
+    missing=retry_feedback(source,'이 사건은 2월에 발생했다.','숫자 누락')
+    assert '"numeric_equivalence_passed": false' in missing
+    assert '"raw_missing"' in missing
 
 
 def test_unique_dataset_identifier_row_is_literal_but_heading_is_not():
@@ -476,7 +488,7 @@ def test_numeric_retry_identifies_an_invented_precision_and_keeps_verbal_quantit
     t._request=request
     record=dict(key='verbal-number',source=source,label='text',context='')
     t.retranslate(record)
-    assert record['final']==good and '"extra": {"0.1": 1}' in calls[1][-1]['content']
+    assert record['final']==good and '"raw_extra": {"0.1": 1}' in calls[1][-1]['content']
     assert '십분의 몇' in calls[0][0]['content']
 
 

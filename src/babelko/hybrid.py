@@ -25,7 +25,7 @@ NUMBER_SPINE=re.compile(
     r"\d+<style\s+id=['\"]\d+['\"]>[,.]</style>\d+|"
     +PLACEHOLDER.pattern+
     r"|(?<![A-Za-z0-9])(?:\d+[A-Za-z][A-Za-z0-9]*|[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|[+-]?\d+(?:\.\d+)?)(?![A-Za-z0-9])")
-VALIDATION_POLICY_REVISION='audited-heuristic-exception-2'
+VALIDATION_POLICY_REVISION='audited-heuristic-exception-3'
 OUTPUT_POLICY_REVISION='identifier-rows-and-code-3'
 AUDITABLE_HEURISTICS=frozenset({'코드 함수 식별자 변경','한국어 문장 안에 영어 원문 구절 미번역','본문 과도 축약'})
 
@@ -232,6 +232,29 @@ def errors(source,target,label='text'):
     from .semantic_guards import errors as semantic_errors
     found.extend(semantic_errors(source,target))
     return found
+
+
+def retry_feedback(source,target,error):
+    """Report numeric evidence without calling valid date conversions invented."""
+    from .translator import number_errors,numbers
+
+    numeric_problem=number_errors(source,target)
+    diagnostics=dict(error=error,numeric_equivalence_passed=not numeric_problem)
+    if numeric_problem:
+        original,candidate=numbers(source),numbers(target)
+        diagnostics.update(source_numeric_occurrences=dict(original),
+            candidate_numeric_occurrences=dict(candidate),
+            raw_missing=dict(original-candidate),raw_extra=dict(candidate-original))
+        advice=('Raw digit counts are clues, not proof: Korean month names, written numbers, '
+            'fractions and scaled quantities may legitimately change their digit forms. '
+            'Compare each source quantity with its Korean counterpart in context. '
+            'Restore genuinely omitted quantities and remove genuinely invented ones. ')
+    else:
+        advice=('The numeric equivalence check already passed, including valid month, date and unit forms. '
+            'Keep those quantities unchanged while repairing the other defect. ')
+    return ('Validation failed: '+json.dumps(diagnostics,ensure_ascii=False)+'. '+advice+
+        'Keep every formula placeholder and style tag in the required order. '
+        'Return the complete Korean SOURCE translation only, without copying CONTEXT or repeating a source clause.')
 
 
 def auditable_issues(source,target,label='text'):
@@ -600,16 +623,7 @@ class HybridTranslator(KoreanTranslator):
                     raise
                 self.retries+=1
                 if isinstance(target,str):messages.append(dict(role='assistant',content=target))
-                from .translator import numbers
-                original_numbers,candidate_numbers=numbers(source),numbers(target or '')
-                diagnostics=dict(error=str(exc),source_numeric_occurrences=dict(original_numbers),
-                    candidate_numeric_occurrences=dict(candidate_numbers),missing=dict(original_numbers-candidate_numbers),
-                    extra=dict(candidate_numbers-original_numbers))
-                messages.append(dict(role='user',content='Validation failed: '+json.dumps(diagnostics,ensure_ascii=False)+
-                    '. Repair the previous candidate. Every item in extra is an invented Arabic-numeral occurrence: remove it or express the source verbal quantity qualitatively in Korean words, never as a new precise digit. '
-                    'Restore every item in missing exactly. Keep a styled separator inside its complete number; attach Korean counters only AFTER the final digit. '
-                    'Do not translate CONTEXT or repeat a year/number to resolve an implicit reference: use a pronoun instead. '
-                    'Return the complete Korean SOURCE translation only, preserving SOURCE numeric occurrence counts and code identifiers.'))
+                messages.append(dict(role='user',content=retry_feedback(source,target or '',str(exc))))
 
     def protected_translation(self,source,record,feedback=None,numeric_failure=True,fraction_hint=''):
         spine=NUMBER_SPINE if numeric_failure and len(NUMBER_SPINE.findall(source))<=32 else PLACEHOLDER
