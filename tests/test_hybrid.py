@@ -273,6 +273,16 @@ def test_long_reference_units_split_without_losing_text_or_style_boundaries():
     assert all(len(p)<1900 and p.count('<style')==p.count('</style>') for p in parts)
 
 
+def test_long_styled_sentences_split_only_after_complete_style_spans():
+    source=("<style id='1'>"+'A complete sentence about the method. '*12+"</style>"
+            "<style id='3'>"+'Another complete sentence about the result. '*12+"</style>")
+    parts=split_source(source,650)
+    assert len(parts)==2 and ''.join(parts)==source
+    assert all(part.count('<style')==part.count('</style>') for part in parts)
+    assert split_source("<style id='1'>Conjecture 2.</style>{v3}the authors explain this.",20)==[
+        "<style id='1'>Conjecture 2.</style>{v3}the authors explain this."]
+
+
 def test_job_checkpoint_replay_is_local_and_never_reuses_broken_draft(tmp_path):
     def instance():
         t=object.__new__(HybridTranslator);t.folder=tmp_path;t.checkpoints=tmp_path/'hybrid';t.checkpoints.mkdir(exist_ok=True)
@@ -593,6 +603,31 @@ def test_segmented_recovery_commits_only_a_complete_validated_candidate(tmp_path
     previous=r['final'];t._request=lambda *args:'연구에는 42명이 참여했다.'
     with pytest.raises(ValueError):t.recover_segments(r)
     assert r['final']==previous
+
+
+def test_segmented_recovery_reuses_only_valid_completed_fragments(tmp_path):
+    t=object.__new__(HybridTranslator);t.checkpoints=tmp_path;t.cancel=lambda:False;t.retries=0
+    t.hard_failures=[];t.stats={'retranslated':0}
+    source='The study included 24 participants. '*50
+    parts=split_source(source,650);assert len(parts)>1
+    record=dict(key='partial',source=source,label='text',context='',final_error='previous failure')
+    first_calls=[]
+    def fail_later(messages):
+        part=json.loads(messages[1]['content'])['SOURCE_FRAGMENT'];first_calls.append(part)
+        return part.replace('The study included 24 participants.','연구에는 24명이 참여했다.') if len(first_calls)==1 else part
+    t._request=fail_later
+    with pytest.raises(ValueError):t.recover_segments(record)
+    assert record['segment_recovery']['targets'][0] and record['segment_recovery']['targets'][1] is None
+    assert (tmp_path/'partial.json').is_file()
+    from babelko.storage import read
+    record=read(tmp_path/'partial.json')  # Simulate process restart.
+    resumed=[]
+    def succeed(messages):
+        part=json.loads(messages[1]['content'])['SOURCE_FRAGMENT'];resumed.append(part)
+        return part.replace('The study included 24 participants.','연구에는 24명이 참여했다.')
+    t._request=succeed;t.recover_segments(record)
+    assert len(resumed)==len(parts)-1 and record['decision']=='segmented_retranslation'
+    assert 'segment_recovery' not in record and not errors(source,record['final'])
 
 
 def test_known_defect_is_repaired_before_a_fresh_audit_without_rechecking_old_candidate(tmp_path):
