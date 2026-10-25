@@ -46,13 +46,13 @@ Item {
             required property var modelData
             required property int index
             readonly property var point: modelData
-            readonly property real diameter: Math.max(5, point.radius * 1.65)
+            readonly property real diameter: Math.max(3.5, point.radius * 0.95)
             x: cloud.width / 2 + point.x * cloud.factor - width / 2
             y: cloud.height / 2 - point.y * cloud.factor - height / 2
             width: diameter; height: diameter; radius: diameter / 2
             color: point.color
             opacity: cloud.selectedIndex >= 0 && cloud.selectedIndex !== index ? 0.45 : 0.98
-            scale: hover.hovered || cloud.selectedIndex === index ? 1.7 : 1
+            scale: hover.hovered || cloud.selectedIndex === index ? 1.45 : 1
             Behavior on scale { NumberAnimation { duration: 140 } }
             HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
             TapHandler { onTapped: cloud.wordPicked(pointItem.index) }

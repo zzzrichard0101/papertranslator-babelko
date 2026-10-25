@@ -11,7 +11,6 @@ Item {
     property bool spaceFailed: false
     property string searchMessage: ""
     readonly property bool use3D: backend.supportsSpace && !flatMode && !spaceFailed
-    readonly property bool animated: visible && backend.settings.motion && !backend.job.active
     readonly property var selected: selectedIndex >= 0 &&
                                      selectedIndex < (wordData.points || []).length
                                      ? wordData.points[selectedIndex] : ({})
@@ -92,7 +91,6 @@ Item {
                 }
                 Binding { target: cloudLoader.item; property: "graph"; value: atlas.wordData; when: cloudLoader.item !== null }
                 Binding { target: cloudLoader.item; property: "selectedIndex"; value: atlas.selectedIndex; when: cloudLoader.item !== null }
-                Binding { target: cloudLoader.item; property: "animated"; value: atlas.animated; when: cloudLoader.item !== null && atlas.use3D }
                 Connections {
                     target: cloudLoader.item
                     ignoreUnknownSignals: true

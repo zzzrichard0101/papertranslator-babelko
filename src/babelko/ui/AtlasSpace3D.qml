@@ -1,13 +1,11 @@
 import QtQuick
 import QtQuick3D
-import QtQuick3D.Particles3D
 
 Item {
     id: space
     objectName: "wordSpaceScene"
     property var graph: ({ points: [], edges: [], clusters: [] })
     property int selectedIndex: -1
-    property bool animated: true
     property real yaw: -16
     property real tilt: -10
     property real cameraDistance: 880
@@ -21,6 +19,24 @@ Item {
         yaw = -16
         tilt = -10
         cameraDistance = 880
+    }
+
+    function nearestWord(x, y, radius) {
+        const points = space.graph.points || []
+        let nearest = -1
+        let distance = radius * radius
+        for (let index = 0; index < points.length; index++) {
+            const word = points[index]
+            const scenePoint = orbitNode.mapPositionToScene(Qt.vector3d(word.x, word.y, word.z))
+            const projected = view.mapFrom3DScene(scenePoint)
+            if (projected.z <= 0) continue
+            const squared = Math.pow(projected.x - x, 2) + Math.pow(projected.y - y, 2)
+            if (squared < distance) {
+                distance = squared
+                nearest = index
+            }
+        }
+        return nearest
     }
 
     View3D {
@@ -92,20 +108,6 @@ Item {
                 }
             }
 
-            ParticleSystem3D {
-                id: particleSystem
-                running: space.animated && (space.graph.points || []).length > 0
-                SpriteParticle3D {
-                    id: wordGlow
-                    sprite: Texture { source: "qrc:///particleresources/glowdot.png" }
-                    maxAmount: 900
-                    color: "#B5F2EE"
-                    billboard: true
-                    fadeInDuration: 240
-                    fadeOutDuration: 850
-                }
-            }
-
             Repeater3D {
                 model: space.graph.points || []
                 delegate: Node {
@@ -119,10 +121,10 @@ Item {
                         property int wordIndex: wordNode.index
                         readonly property bool emphasized: space.selectedIndex === wordNode.index ||
                                                             space.hoveredIndex === wordNode.index
-                        source: wordNode.index < 80 ? "#Sphere" : "#Cube"
-                        scale: Qt.vector3d(word.radius * (emphasized ? 2.8 : 2) / 100,
-                                           word.radius * (emphasized ? 2.8 : 2) / 100,
-                                           word.radius * (emphasized ? 2.8 : 2) / 100)
+                        source: "#Sphere"
+                        scale: Qt.vector3d(word.radius * (emphasized ? 1.4 : 0.85) / 100,
+                                           word.radius * (emphasized ? 1.4 : 0.85) / 100,
+                                           word.radius * (emphasized ? 1.4 : 0.85) / 100)
                         pickable: true
                         materials: DefaultMaterial {
                             diffuseColor: word.color
@@ -131,25 +133,6 @@ Item {
                                      !emphasized &&
                                      word.cluster !== space.graph.points[space.selectedIndex].cluster ? 0.35 : 0.98
                             lighting: DefaultMaterial.NoLighting
-                        }
-                    }
-                    ParticleEmitter3D {
-                        system: particleSystem
-                        particle: wordGlow
-                        enabled: space.animated && wordNode.index < 110
-                        emitRate: Math.min(8, Math.max(1, Math.sqrt(word.count) * 1.6))
-                        lifeSpan: 3600
-                        particleScale: 1.7
-                        particleScaleVariation: 0.45
-                        shape: ParticleShape3D {
-                            type: ParticleShape3D.Sphere
-                            extents: Qt.vector3d(word.radius * 3,
-                                                 word.radius * 3,
-                                                 word.radius * 3)
-                        }
-                        velocity: VectorDirection3D {
-                            direction: Qt.vector3d(0, 0, 0)
-                            directionVariation: Qt.vector3d(5, 5, 5)
                         }
                     }
                 }
@@ -166,7 +149,7 @@ Item {
     }
     Repeater {
         objectName: "wordLabelRepeater"
-        model: Math.min(9, (space.graph.points || []).length)
+        model: Math.min(6, (space.graph.points || []).length)
         delegate: Rectangle {
             objectName: "wordLabel3D"
             z: 2
@@ -234,8 +217,9 @@ Item {
         onClicked: (mouse) => {
             if (rotated) return
             const hit = view.pick(mouse.x, mouse.y)
-            if (hit.objectHit && hit.objectHit.wordIndex !== undefined)
-                space.wordPicked(hit.objectHit.wordIndex)
+            const index = hit.objectHit && hit.objectHit.wordIndex !== undefined
+                          ? hit.objectHit.wordIndex : space.nearestWord(mouse.x, mouse.y, 12)
+            if (index >= 0) space.wordPicked(index)
         }
         onWheel: (wheel) => {
             space.cameraDistance = Math.max(430, Math.min(1500,
@@ -252,7 +236,7 @@ Item {
             if (interaction.pressed) return
             const hit = view.pick(space.hoverX, space.hoverY)
             space.hoveredIndex = hit.objectHit && hit.objectHit.wordIndex !== undefined
-                                 ? hit.objectHit.wordIndex : -1
+                                 ? hit.objectHit.wordIndex : space.nearestWord(space.hoverX, space.hoverY, 10)
         }
     }
     Rectangle {
