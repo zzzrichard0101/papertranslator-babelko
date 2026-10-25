@@ -55,6 +55,15 @@ def test_repeated_diagram_identifiers_keep_their_exact_occurrences():
     assert errors(row,row[:-5])
 
 
+def test_unique_dataset_identifier_row_is_literal_but_heading_is_not():
+    from babelko.hybrid import literal
+    row='MME SQA-I POPE VQAv2 LLaVA-W'
+    assert literal(row)
+    assert not errors(row,row)
+    assert not literal('3DGS NETWORK ARCHITECTURE')
+    assert not literal('The model uses MME and VQAv2 for evaluation.')
+
+
 def test_standalone_formula_with_native_placeholders_is_literal_not_english_prose():
     from babelko.hybrid import literal
     equation="<style id='1'>6 </style>c{v3}<style id='4'>(</style>Y{v6}V{v7}Y{v8}w{v9}<style id='10'>)</style>{v12}Y{v13}V{v14}<style id='15'>ˆ</style>C{v17}"
@@ -211,6 +220,13 @@ def test_failed_edit_can_recover_a_faithful_saved_draft(tmp_path):
 ])
 def test_translation_contract_failures(source,target):
     assert errors(source,target)
+
+
+def test_ocr_spaced_program_code_is_preserved_without_hiding_prose():
+    from babelko.hybrid import literal
+    assert literal('in t f ( void ) { i n t a {v1}; f o r ( ; ; ) { a {v2}; a -{v3}; } }')
+    assert literal('long f ( ) { long x {v1}; f o r ( i n t i {v2}; i {v3}; {v4}i ) { w h i le ( x {v5}) { i f ( x % {v6}) { x {v7}; } } } r e t u r n x ; }')
+    assert not literal('The function for calculating a score (x) uses two inputs; it returns a sum.')
 
 
 def test_patch_must_quote_source_and_revalidate_whole_target():

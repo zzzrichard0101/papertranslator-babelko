@@ -223,9 +223,15 @@ def summarize(base):
                          error=state.get('error'), output=str(output) if output else None))
     completed = [r for r in rows if r['status'] == 'completed']
     seconds = sum(r['elapsed_seconds'] or 0 for r in rows)
+    issue_counts = {}
+    for row in rows:
+        for code in row['issue_codes']:
+            issue_counts[code] = issue_counts.get(code, 0) + 1
     report = dict(updated_at=dt.datetime.now(dt.timezone.utc).isoformat(), total=len(rows),
                   completed=len(completed), partial=sum(r['status'] == 'partial' for r in rows),
-                  failed=sum(r['status'] == 'failed' and r['attempts'] >= 2 for r in rows),
+                  failed=sum(r['status'] == 'failed' for r in rows),
+                  issue_counts=issue_counts,
+                  batch_hold=read(base / 'batch-hold.json') if (base / 'batch-hold.json').exists() else None,
                   checked_pages=sum(r['source_pages'] for r in completed),
                   qa_passed=sum(r['checks'] == 'passed' and r['tracking'] == 'passed'
                                 and r['meaning_assurance'] == 'passed' and r['rendered_prose'] == 'passed'
@@ -244,26 +250,35 @@ def summarize(base):
                   str(row['checks'] or '—'), ', '.join(row['issue_codes']), link]
         cells.append('<tr>' + ''.join(f'<td>{v if i == 7 else html.escape(v)}</td>'
                                         for i, v in enumerate(values)) + '</tr>')
+    hold = ('<p class="hold">반복된 검증 실패로 자동 번역을 일시 중지했습니다. '
+            '저장된 작업은 유지됩니다.</p>' if report['batch_hold'] else '')
+    issue_names = dict(translation_failed='번역 조각 미완료', rendered_prose_missing='PDF 표시 누락',
+                       figure_legend_incomplete='그림 설명 미완료')
+    issue_summary = ' · '.join(f'{issue_names.get(code, code)} {count}편'
+                             for code, count in sorted(issue_counts.items())) or '현재 기록된 검사 문제 없음'
     page = '''<!doctype html><html lang="ko"><meta charset="utf-8"><meta http-equiv="refresh" content="120">
 <title>BabelKO 30편 평가</title><style>
 body{{font:15px/1.6 system-ui,sans-serif;max-width:1300px;margin:40px auto;padding:0 22px;color:#243347;background:#f7f9fc}}
 h1{{font-size:30px;margin-bottom:6px}}.summary{{font-size:18px;margin:0 0 24px}}
 table{{border-collapse:collapse;width:100%;background:white}}th,td{{padding:9px 12px;text-align:left;border-bottom:1px solid #e3e9ef}}
 th{{background:#eaf1f5;position:sticky;top:0}}tr:hover{{background:#f2f8fa}}.note{{color:#5c6977}}
+.hold{{padding:12px 16px;background:#fff1df;color:#713b09;border-radius:8px}}
 </style><h1>다양한 분야 논문 30편 평가</h1>
 <p class="summary">완료 <b>{completed}/30</b> · QA 통과 <b>{qa_passed}</b> · 일부 완료 <b>{partial}</b> · 실패 <b>{failed}</b> · 검증된 쪽 <b>{pages}</b></p>
+{hold}
+<p class="note">검사 문제: {issues}</p>
 <p class="note">로컬 모델로 순차 처리합니다. 이 페이지는 2분마다 새로고침됩니다. QA는 누락·배치 등의 자동 점검이며 번역 의미의 완전성을 보증하지 않습니다.</p>
 <table><thead><tr><th>분야</th><th>논문 ID</th><th>진행</th><th>쪽</th><th>초</th><th>QA</th><th>문제 코드</th><th>파일</th></tr></thead><tbody>{rows}</tbody></table></html>'''.format(
         completed=report['completed'], qa_passed=report['qa_passed'], partial=report['partial'],
-        failed=report['failed'], pages=report['checked_pages'], rows=''.join(cells))
+        failed=report['failed'], pages=report['checked_pages'], hold=hold,
+        issues=html.escape(issue_summary), rows=''.join(cells))
     (base / 'Report.html').write_text(page, encoding='utf-8')
     return report
 
 
 def finished(report):
     return report['total'] == 30 and all(
-        row['status'] == 'completed' or
-        (row['status'] in {'failed', 'partial'} and row['attempts'] >= 2)
+        row['status'] in {'completed', 'failed', 'partial'}
         for row in report['rows'])
 
 
@@ -279,12 +294,31 @@ def stop_completed_schedule(base, report):
     print('Benchmark finished; both local scheduled tasks disabled.', flush=True)
 
 
-def run(base, once=False):
+def hold_after_repeated_failures(base, recent):
+    """Avoid burning hours on a newly broken pipeline across many PDFs."""
+    if len(recent) < 3 or any(status == 'completed' for _, status in recent[-3:]):
+        return False
+    save(base / 'batch-hold.json', dict(reason='three consecutive documents did not pass QA',
+                                       recent=recent[-3:], created_at=dt.datetime.now(dt.timezone.utc).isoformat()))
+    if base.resolve() == DEFAULT_BASE.resolve():
+        subprocess.run(['powershell', '-NoProfile', '-Command',
+                        "Disable-ScheduledTask -TaskName 'PaperTranslator-BabelKO-Diverse30' | Out-Null"],
+                       check=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    print('Three consecutive incomplete documents; automatic batch paused for diagnosis.', flush=True)
+    return True
+
+
+def run(base, once=False, case_key=None):
     from babelko.pipeline import create
 
     manifest = read(base / 'manifest.json')
     if len(manifest['cases']) != 30:
         raise RuntimeError('Need a frozen 30-paper manifest')
+    if case_key and case_key not in {case['key'] for case in manifest['cases']}:
+        raise ValueError('Unknown benchmark case: ' + case_key)
+    if (base / 'batch-hold.json').exists():
+        print('Batch is held for quality diagnosis; resume explicitly after a fix.', flush=True)
+        return
     home = base / 'home'
     home.mkdir(exist_ok=True)
     source_assets = Path(os.environ['LOCALAPPDATA']) / 'PaperTranslatorBabelKO' / 'assets'
@@ -300,12 +334,16 @@ def run(base, once=False):
     output.mkdir(exist_ok=True)
     records = base / 'runs'
     records.mkdir(exist_ok=True)
+    recent = []
     for case in manifest['cases']:
+        if case_key and case['key'] != case_key:
+            continue
         record_path = records / (case['key'] + '.json')
         record = read(record_path) if record_path.exists() else {}
-        if record.get('attempts', 0) >= 2 and record.get('status') in {'failed', 'partial'}:
-            continue
-        if record.get('status') == 'completed':
+        # A second full pass without a changed mechanism wastes GPU hours.
+        # Finish first-pass coverage; explicit --case selects a known failure
+        # for a checkpointed recheck after a targeted fix.
+        if record.get('status') in {'completed', 'failed', 'partial'} and not case_key:
             continue
         if (app_busy(home) or app_busy(Path(os.environ['LOCALAPPDATA']) / 'PaperTranslatorBabelKO')
                 or another_model_busy()):
@@ -329,7 +367,10 @@ def run(base, once=False):
                                ended_at=dt.datetime.now(dt.timezone.utc).isoformat()))
         report = summarize(base)
         print(f'{case["key"]}: {state["status"]}; completed {report["completed"]}/30', flush=True)
+        recent.append((case['key'], state['status']))
         if once:
+            break
+        if hold_after_repeated_failures(base, recent):
             break
     report = summarize(base)
     stop_completed_schedule(base, report)
@@ -340,6 +381,7 @@ def main():
     parser.add_argument('action', choices=['prepare', 'run', 'report'])
     parser.add_argument('--base', type=Path, default=DEFAULT_BASE)
     parser.add_argument('--once', action='store_true', help='Process at most one pending paper')
+    parser.add_argument('--case', help='Recheck one named paper without launching the batch')
     args = parser.parse_args()
     base = args.base.resolve()
     base.mkdir(parents=True, exist_ok=True)
@@ -353,7 +395,7 @@ def main():
             from contextlib import redirect_stderr, redirect_stdout
             with redirect_stdout(stream), redirect_stderr(stream):
                 print('scheduler start', dt.datetime.now(dt.timezone.utc).isoformat(), flush=True)
-                run(base, args.once)
+                run(base, args.once, args.case)
                 print('scheduler finish', dt.datetime.now(dt.timezone.utc).isoformat(), flush=True)
 
 

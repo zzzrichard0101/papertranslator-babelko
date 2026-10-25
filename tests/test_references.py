@@ -82,6 +82,26 @@ def test_numbered_full_name_bibliography_continues_across_pages():
     assert chosen==[heading,first,clipped,continuation,next_entry]
 
 
+def test_arxiv_only_references_continue_across_page_boundary():
+    heading=paragraph('References','title')
+    first=paragraph('[1] Anwar, Usman et al. "Foundational Challenges in Safety." ArXiv abs/2404.09932 (2024): n. pag.')
+    clipped=paragraph('abs/2309.13788 (2023): n. pag.')
+    second=paragraph('[3] Chung, Hyung Won et al. "Scaling Instruction-Finetuned Language Models." ArXiv abs/2210.11416 (2022): n. pag.')
+    chosen=[p for _,p,_ in select(document([heading,first],[clipped,second]))]
+    assert chosen==[heading,first,clipped,second]
+
+
+def test_clipped_fused_arxiv_column_preserved_after_pdf_placeholder_extraction():
+    heading=paragraph('References','title')
+    first=paragraph('[1] Doe, Jane et al. "Initial study." ArXiv abs/2309.13788 (2023): n. pag.')
+    fused=paragraph('abs/2309.13788 (2023): n. pag.{v1}Anwar, Usman et al. '
+        '"Foundational Challenges in Safety." ArXiv abs/2404.09932 (2024): n. pag.'
+        '{v2}Chung, Hyung Won et al. "Scaling Models." ArXiv abs/2210.11416 (2022): n. pag.')
+    body=paragraph('We compare models in 2024 and cite ArXiv abs/2404.09932.')
+    assert entry(fused.unicode) and not entry(body.unicode)
+    assert [p for _,p,_ in select(document([heading,first],[fused,body]))]==[heading,first,fused,body]
+
+
 def test_fused_appendix_contents_are_preserved_without_hiding_appendix_body():
     heading=paragraph('Appendix','title')
     top=paragraph('A The proof of orthogonality','title')

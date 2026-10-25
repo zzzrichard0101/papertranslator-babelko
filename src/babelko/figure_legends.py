@@ -14,7 +14,7 @@ import pymupdf as fitz
 from .storage import read,save,digest
 from .translator import validate_items
 
-REVISION='preserved-figure-local-legend-1'
+REVISION='preserved-figure-local-legend-2'
 IMAGE_PATH=re.compile(r'^FigureImages/page-\d+-figure-\d+\.png$')
 CAPTIONS={'figure_caption','figure_title','chart_title','caption','caption_hybrid'}
 FIGURES={'figure'}
@@ -36,6 +36,12 @@ def explanatory_label(source):
     value=re.sub(r'\s+',' ',source or '').strip()
     words=re.findall(r'[A-Za-z]{3,}',value)
     if not words or not 2<=len(value)<=240:return False
+    # Scientific figures commonly contain model/dataset names or source code.
+    # Their exact spelling belongs in the original figure, not in a required
+    # Korean legend; treating them as prose made whole documents fail QA.
+    if re.search(r'[{};`"=<>]|\b(?:int|void|float|char|double)\s+\w+\s*\(',value):return False
+    if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._+/\-]*',value):
+        if re.search(r'\d|[._+/\-]|[a-z][A-Z]|[A-Z]{2,}[a-z]',value):return False
     if len(words)==1 and len(words[0])<=5 and re.fullmatch(r'[A-Z0-9_.+\-/\s()]+',value):return False
     if re.fullmatch(r'(?:Fig(?:ure)?\.?\s*)?\d+[a-z]?',value,re.I):return False
     if all(w.lower() in {'sin','cos','tan','log','exp','max','min','sum','lim','std','fps','gpu','cpu'} for w in words):return False
@@ -98,11 +104,10 @@ def preserve(folder):
 
 
 def translate_labels(figures,translator):
-    """One local, structured request per small batch; failure never invents a label."""
+    """Translate in batches, isolating only malformed or rejected labels."""
     sources=list(dict.fromkeys(label['source'] for fig in figures for label in fig['labels'] if label['explanatory']))
     translations={};errors={}
-    for start in range(0,len(sources),12):
-        batch=sources[start:start+12]
+    def translate_batch(batch):
         ids=list(range(len(batch)))
         schema=dict(type='array',minItems=len(ids),maxItems=len(ids),items=dict(type='object',
             additionalProperties=False,properties=dict(id=dict(type='integer',enum=ids),output=dict(type='string')),
@@ -118,17 +123,24 @@ def translate_labels(figures,translator):
                 {row.get('id') for row in answer if isinstance(row,dict)}!=set(ids)):
                 raise ValueError('범례 응답 항목 불일치')
             by_id={row['id']:row for row in answer}
-            for i,source in enumerate(batch):
-                try:
-                    output=by_id[i]['output']
-                    validate_items([dict(id=0,input=source)],[dict(id=0,output=output)])
-                    if not re.search(r'[가-힣]',output) or len(output)>max(100,4*len(source)):
-                        raise ValueError('범례 번역이 아닌 응답')
-                    translations[source]=output.strip()
-                except (ValueError,TypeError,KeyError) as exc:errors[source]=str(exc)
         except InterruptedError:raise
         except Exception as exc:
-            for source in batch:errors[source]=str(exc)[:160]
+            if len(batch)>1:
+                middle=len(batch)//2
+                translate_batch(batch[:middle]);translate_batch(batch[middle:])
+            else:errors[batch[0]]=str(exc)[:160]
+            return
+        for i,source in enumerate(batch):
+            try:
+                output=by_id[i]['output']
+                validate_items([dict(id=0,input=source)],[dict(id=0,output=output)])
+                if not re.search(r'[가-힣]',output) or len(output)>max(100,4*len(source)):
+                    raise ValueError('범례 번역이 아닌 응답')
+                translations[source]=output.strip()
+            except (ValueError,TypeError,KeyError) as exc:
+                if len(batch)>1:translate_batch([source])
+                else:errors[source]=str(exc)[:160]
+    for start in range(0,len(sources),12):translate_batch(sources[start:start+12])
     return translations,errors
 
 

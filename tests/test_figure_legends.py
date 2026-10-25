@@ -3,7 +3,7 @@ from types import SimpleNamespace as NS
 
 import pymupdf as fitz
 
-from babelko.figure_legends import REVISION,explanatory_label,export,preserve,select,image_manifest_valid,rebuild_images
+from babelko.figure_legends import REVISION,explanatory_label,export,preserve,select,image_manifest_valid,rebuild_images,translate_labels
 from babelko.storage import save,digest
 
 
@@ -35,6 +35,10 @@ def test_uppercase_multiword_label_is_meaningful_but_panel_and_acronym_are_not()
     assert not explanatory_label('GPU')
     assert not explanatory_label('(a)')
     assert not explanatory_label('12.5')
+    for source in ['LLaVA-665K','DocVQA','SafetyBench','Data1','1B-Instruct','int f(int* a) {','int f(int a)','return sum;']:
+        assert not explanatory_label(source)
+    assert explanatory_label('Patient outcome')
+    assert explanatory_label('Natural')
 
 
 def test_preserve_filters_only_figure_interior(tmp_path,monkeypatch):
@@ -98,3 +102,29 @@ def test_invalid_legend_response_reports_incomplete_without_inventing_text(tmp_p
     report=export(tmp_path,out,original,Translator())
     assert report['status']=='partial' and report['translated_labels']==0
     assert report['unresolved_labels'][0]['source']=='Treatment group'
+
+
+def test_bad_figure_label_is_isolated_without_discarding_its_batch():
+    sources=['Control group','Treatment group','Unsupported legend','Patient outcome']
+    figures=[dict(labels=[dict(source=x,explanatory=True) for x in sources])]
+    class Translator:
+        calls=[]
+        def _request(self,messages,schema):
+            rows=json.loads(messages[1]['content']);self.calls.append([x['input'] for x in rows])
+            if len(rows)>1 and any('Unsupported' in x['input'] for x in rows):return '[]'
+            return json.dumps([dict(id=x['id'],output='미지원 범례' if 'Unsupported' in x['input'] else '환자 결과') for x in rows],ensure_ascii=False)
+    translator=Translator();translated,errors=translate_labels(figures,translator)
+    assert len(translated)==4 and not errors
+    assert translator.calls[0]==sources
+    assert len(translator.calls)<len(sources)*2
+
+
+def test_untranslatable_single_figure_label_stays_unresolved():
+    figures=[dict(labels=[dict(source=x,explanatory=True) for x in ['Control group','Bad label']])]
+    class Translator:
+        def _request(self,messages,schema):
+            rows=json.loads(messages[1]['content'])
+            return json.dumps([dict(id=x['id'],output='Bad label' if x['input']=='Bad label' else '대조군') for x in rows],ensure_ascii=False)
+    translated,errors=translate_labels(figures,Translator())
+    assert translated=={'Control group':'대조군'}
+    assert 'Bad label' in errors

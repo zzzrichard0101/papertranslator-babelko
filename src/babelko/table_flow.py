@@ -53,10 +53,10 @@ def merge_cells(paragraphs,regions,page_number=None):
             if max(p.box.x for p in group)-min(p.box.x for p in group)>8:continue
             left=group[0];before=[p.unicode for p in group]
             weighted=[p for p in group if p.pdf_style is not None]
-            if weighted:left.pdf_style=copy.deepcopy(max(weighted,key=lambda p:len(p.unicode)).pdf_style)
+            if weighted:left.pdf_style=copy.copy(max(weighted,key=lambda p:len(p.unicode)).pdf_style)
             left.pdf_paragraph_composition=[c for p in group for c in p.pdf_paragraph_composition]
             left.unicode=' '.join(before);left.layout_label='plain text'
-            left.box=copy.deepcopy(left.box)
+            left.box=copy.copy(left.box)
             left.box.x=min(p.box.x for p in group);left.box.x2=max(p.box.x2 for p in group)
             left.box.y=min(p.box.y for p in group);left.box.y2=max(p.box.y2 for p in group)
             removed.update(id(p) for p in group[1:])

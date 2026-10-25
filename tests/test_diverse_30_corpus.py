@@ -67,5 +67,14 @@ def test_previous_sources_are_excluded_by_id_and_hash(tmp_path, monkeypatch):
 def test_schedule_only_stops_after_every_case_is_terminal():
     rows = [dict(status='completed', attempts=1) for _ in range(29)]
     assert not corpus.finished(dict(total=30, rows=rows + [dict(status='queued', attempts=0)]))
-    assert not corpus.finished(dict(total=30, rows=rows + [dict(status='failed', attempts=1)]))
-    assert corpus.finished(dict(total=30, rows=rows + [dict(status='partial', attempts=2)]))
+    assert corpus.finished(dict(total=30, rows=rows + [dict(status='failed', attempts=1)]))
+    assert corpus.finished(dict(total=30, rows=rows + [dict(status='partial', attempts=1)]))
+
+
+def test_repeated_incomplete_documents_hold_batch(tmp_path):
+    recent=[('first','partial'),('second','failed')]
+    assert not corpus.hold_after_repeated_failures(tmp_path,recent)
+    assert not corpus.hold_after_repeated_failures(tmp_path,recent+[('third','completed')])
+    assert corpus.hold_after_repeated_failures(tmp_path,recent+[('third','partial')])
+    hold=json.loads((tmp_path/'batch-hold.json').read_text(encoding='utf-8'))
+    assert len(hold['recent'])==3

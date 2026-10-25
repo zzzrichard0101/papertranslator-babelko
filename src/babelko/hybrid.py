@@ -26,7 +26,7 @@ NUMBER_SPINE=re.compile(
     +PLACEHOLDER.pattern+
     r"|(?<![A-Za-z0-9])(?:\d+[A-Za-z][A-Za-z0-9]*|[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|[+-]?\d+(?:\.\d+)?)(?![A-Za-z0-9])")
 VALIDATION_POLICY_REVISION='audited-heuristic-exception-1'
-OUTPUT_POLICY_REVISION='compact-metric-label-1'
+OUTPUT_POLICY_REVISION='identifier-rows-and-code-3'
 AUDITABLE_HEURISTICS=frozenset({'코드 함수 식별자 변경','한국어 문장 안에 영어 원문 구절 미번역','본문 과도 축약'})
 
 
@@ -34,6 +34,13 @@ def literal(source):
     if metric_identifiers(source):return True
     source=decode_font(source)
     text=plain(source).strip()
+    # OCR often inserts spaces between every character of source code.  When
+    # braces, statements and a control/type keyword still agree, retain the
+    # executable text verbatim instead of flagging untranslated English.
+    compact=re.sub(r'\s+','',re.sub(r'\{v\d+\}','',text)).lower()
+    if (compact.count('{')>=2 and compact.count(';')>=2 and '(' in compact and ')'
+        in compact and re.search(r'(?:for|while|if|return|void|int|long|bool|class|struct|def)\(',compact)):
+        return True
     # A formula exposed by the PDF parser is sometimes a standalone native
     # paragraph. Its Latin variable names must not be treated as English prose.
     placeholders=len(re.findall(r'\{v\d+\}',source))
@@ -52,6 +59,12 @@ def literal(source):
         and any(re.search(r'\d',token) for token in tokens)
         and all(re.fullmatch(r'[A-Z]{2,}|\d+[A-Z]{2,}[A-Z0-9]*',token) for token in tokens)):
         return True
+    # Benchmark tables can emit a row of unrelated dataset/model IDs as one
+    # paragraph. Their exact spelling is data, even when the IDs are unique.
+    if (len(tokens)>=3 and all(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/\-]*',token) for token in tokens)
+        and not any(token.lower() in {'the','and','for','with','from','this','that','is','are','was','were'} for token in tokens)):
+        marked=sum(bool(re.search(r'\d|[._/\-]|[a-z][A-Z]|[A-Z]{2,}[a-z]',token)) for token in tokens)
+        if marked>=2 and marked*2>=len(tokens):return True
     identifiers=re.sub(r'https?://[^\s,;]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}','',text)
     identifiers=re.sub(r'\b(?:email|e-mail|doi|orcid|url)\b','',identifiers,flags=re.I)
     if not re.search(r'[A-Za-z가-힣]',identifiers):return True

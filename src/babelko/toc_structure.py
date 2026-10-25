@@ -45,7 +45,7 @@ def split_paragraph(paragraph,page_width):
         if not text:continue
         piece=copy.copy(paragraph);piece.debug_id=(paragraph.debug_id or 'toc')+'-row-'+str(n)
         piece.pdf_paragraph_composition=[item[0] for item in prose]
-        piece.unicode=text;piece.box=copy.deepcopy(paragraph.box)
+        piece.unicode=text;piece.box=copy.copy(paragraph.box)
         piece.box.x=min(item[1].x for item in prose)
         piece.box.x2=min(page_width*.84,max(item[1].x2 for item in prose))
         piece.box.y=min(item[1].y for item in prose)

@@ -8,14 +8,15 @@ from contextlib import contextmanager
 from unittest.mock import patch
 from .storage import save
 
-REVISION='bibliography-original-and-contents-6'
+REVISION='bibliography-original-and-contents-8'
 TAGS=re.compile(r'<[^>]+>')
 HEADING=re.compile(r'^(?:(?:\d+(?:\.\d+)*|[A-Z])\.?\s+)?(?:references|bibliography|works cited|literature cited|참고\s*문헌)\s*[:.]?$',re.I)
 AUTHOR_YEAR=re.compile(r"\b[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s+(?:[A-Z]\.\s*){1,3}(?:(?:,?\s*&\s*|,\s*)[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s*(?:[A-Z]\.\s*){1,3})?\s*(?:\(Ed(?:s)?\.\)\.\s*)?\((?:18|19|20)\d{2}[a-z]?\)\.")
 # Numeric labels in camera-ready papers usually precede full given names,
 # not APA surnames. A clipped column may also lose the opening '['.
 NUMBERED=re.compile(r'^\s*(?:\[\d+\]|\d+\]|\d+\.)\s+(?:[A-Z]\.\s*)*[A-Z][A-Za-z’\'\-]+(?:\s+[A-Z][A-Za-z’\'\-]+){0,3}(?:,|\s+[A-Z]\.)')
-METADATA=re.compile(r'https?://doi\.org/|\bdoi\s*:|\b\d+\s*\(\d+\)\s*[,.:]|\b(?:pp\.|vol\.|press\b|publisher\b)|\b[A-Z]{2}:\s*[A-Z]',re.I)
+METADATA=re.compile(r'https?://doi\.org/|\bdoi\s*:|\barxiv\b|\babs/\d{4}\.\d{4,5}\b|\b\d+\s*\(\d+\)\s*[,.:]|\b(?:pp\.|vol\.|press\b|publisher\b)|\b[A-Z]{2}:\s*[A-Z]',re.I)
+ARXIV_ID=re.compile(r'\babs/\d{4}\.\d{4,5}\b',re.I)
 
 
 def text(paragraph):
@@ -29,7 +30,15 @@ def entry(value):
     # with another line. Repeated author/year anchors plus publication metadata
     # establish a bibliography even when its first characters are damaged.
     damaged_block=len(matches)>=2 and bool(METADATA.search(value)) and len(value)/len(matches)<650
-    return bool(damaged_block or (matches and matches[0].start()==0 and (len(matches)>1 or METADATA.search(value))) or
+    # A PDF extractor can fuse a whole numbered reference column into one
+    # paragraph and replace its [n] markers with formula placeholders.  A
+    # clipped carry-over may then start with "abs/..." rather than an author.
+    # Multiple distinct arXiv records with publication years are stronger
+    # evidence than the paragraph's damaged first token.
+    arxiv_ids=set(ARXIV_ID.findall(value))
+    fused_arxiv_block=(len(arxiv_ids)>=2 and len(re.findall(r'\b(?:18|19|20)\d{2}\b',value))>=2
+                       and len(value)/len(arxiv_ids)<900)
+    return bool(damaged_block or fused_arxiv_block or (matches and matches[0].start()==0 and (len(matches)>1 or METADATA.search(value))) or
                 (NUMBERED.match(value) and re.search(r'\b(?:18|19|20)\d{2}\b',value) and METADATA.search(value)))
 
 

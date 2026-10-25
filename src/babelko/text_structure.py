@@ -66,10 +66,13 @@ def expose_prose_formulas(docs):
                 if not styles:continue
                 counts=collections.Counter((s.font_id,s.font_size) for s in styles)
                 dominant=counts.most_common(1)[0][0]
-                left.pdf_style=copy.deepcopy(next(s for s in styles if (s.font_id,s.font_size)==dominant))
+                # IL styles may retain deeply nested parser state. Only the
+                # top-level style is ever mutated here; copying its graph can
+                # overflow Python's recursion limit on otherwise valid PDFs.
+                left.pdf_style=copy.copy(next(s for s in styles if (s.font_id,s.font_size)==dominant))
             left.box.x=min(p.box.x for p in group);left.box.x2=max(p.box.x2 for p in group)
             left.box.y=min(p.box.y for p in group);left.box.y2=max(p.box.y2 for p in group)
-            left.pdf_paragraph_composition=[PdfParagraphComposition(pdf_line=PdfLine(box=copy.deepcopy(left.box),pdf_character=chars))]
+            left.pdf_paragraph_composition=[PdfParagraphComposition(pdf_line=PdfLine(box=copy.copy(left.box),pdf_character=chars))]
             left.unicode=text;removed.update(id(p) for p in group[1:])
             changes.append(dict(page=getattr(page,'page_number',None),before=before,after=text))
         if removed:page.pdf_paragraph=[p for p in paragraphs if id(p) not in removed]
@@ -169,9 +172,11 @@ def normalize_input(value):
             if not match or not 1<=int(match[2])<=31:continue
             following=value.unicode.split(placeholder.placeholder,1)[-1]
             if not re.match(r'\s*'+MONTH+r'\s+\d{4}\b',following,re.I):continue
-            retained=[copy.deepcopy(c) for c in chars if not any(ch.isdigit() for ch in (c.char_unicode or ''))]
+            retained=[copy.copy(c) for c in chars if not any(ch.isdigit() for ch in (c.char_unicode or ''))]
             if not retained:continue
-            replacement=copy.deepcopy(placeholder);replacement.formula.pdf_character=retained
+            replacement=copy.copy(placeholder);replacement.formula=copy.copy(placeholder.formula)
+            replacement.formula.box=copy.copy(placeholder.formula.box)
+            replacement.formula.pdf_character=retained
             boxes=[c.box for c in retained if c.box is not None]
             if boxes:
                 box=replacement.formula.box

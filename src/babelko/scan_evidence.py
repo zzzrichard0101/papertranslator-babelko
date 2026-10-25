@@ -529,5 +529,5 @@ def apply(docs,plans):
             for comp in p.pdf_paragraph_composition:
                 run=comp.pdf_same_style_unicode_characters
                 if run and run.pdf_style:
-                    run.pdf_style=copy.deepcopy(run.pdf_style);run.pdf_style.font_size=min(run.pdf_style.font_size,item['size'])
-            if p.pdf_style:p.pdf_style=copy.deepcopy(p.pdf_style);p.pdf_style.font_size=min(p.pdf_style.font_size,item['size'])
+                    run.pdf_style=copy.copy(run.pdf_style);run.pdf_style.font_size=min(run.pdf_style.font_size,item['size'])
+            if p.pdf_style:p.pdf_style=copy.copy(p.pdf_style);p.pdf_style.font_size=min(p.pdf_style.font_size,item['size'])

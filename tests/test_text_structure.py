@@ -85,6 +85,11 @@ def test_prose_misclassified_as_formula_is_exposed_but_equations_are_preserved()
     from babelko.text_structure import expose_prose_formulas
     from babeldoc.format.pdf.document_il import Box,PdfCharacter,PdfStyle,PdfFormula,PdfParagraph,PdfParagraphComposition,VisualBbox
     style=PdfStyle(font_id='F1',font_size=10)
+    # Real PDF parser styles may carry nested state that is much deeper than
+    # this paragraph. The adapter only needs a separate top-level style.
+    nested=[]
+    for _ in range(1100):nested=[nested]
+    style.graphic_state=nested
     def paragraph(text,x):
         chars=[]
         for i,c in enumerate(text):
