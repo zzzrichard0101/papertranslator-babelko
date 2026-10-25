@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 from .storage import save
 
-REVISION='bibliography-original-and-contents-8'
+REVISION='bibliography-original-and-contents-10'
 TAGS=re.compile(r'<[^>]+>')
 HEADING=re.compile(r'^(?:(?:\d+(?:\.\d+)*|[A-Z])\.?\s+)?(?:references|bibliography|works cited|literature cited|참고\s*문헌)\s*[:.]?$',re.I)
 AUTHOR_YEAR=re.compile(r"\b[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s+(?:[A-Z]\.\s*){1,3}(?:(?:,?\s*&\s*|,\s*)[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s*(?:[A-Z]\.\s*){1,3})?\s*(?:\(Ed(?:s)?\.\)\.\s*)?\((?:18|19|20)\d{2}[a-z]?\)\.")
@@ -17,6 +17,10 @@ AUTHOR_YEAR=re.compile(r"\b[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s+(?:[A-Z]\.\s*)
 NUMBERED=re.compile(r'^\s*(?:\[\d+\]|\d+\]|\d+\.)\s+(?:[A-Z]\.\s*)*[A-Z][A-Za-z’\'\-]+(?:\s+[A-Z][A-Za-z’\'\-]+){0,3}(?:,|\s+[A-Z]\.)')
 METADATA=re.compile(r'https?://doi\.org/|\bdoi\s*:|\barxiv\b|\babs/\d{4}\.\d{4,5}\b|\b\d+\s*\(\d+\)\s*[,.:]|\b(?:pp\.|vol\.|press\b|publisher\b)|\b[A-Z]{2}:\s*[A-Z]',re.I)
 ARXIV_ID=re.compile(r'\babs/\d{4}\.\d{4,5}\b',re.I)
+# Some extractors merge an entire numbered bibliography column into one
+# paragraph, leaving its first citation split across several IL paragraphs.
+FUSED_NUMBERED=re.compile(r'(?:^|[.!?]\s+)\d{1,3}\.\s+[A-Z][A-Za-z’\'\-]+,\s*(?:[A-Z]\.|[A-Z][a-z])')
+AUTHOR_BIO=re.compile(r'^[A-Z][A-Z .\-]{9,}\s+(?:\([^)]*IEEE\)\s+)?(?:received|obtained|earned|is currently|was born)\b',re.I)
 
 
 def text(paragraph):
@@ -38,7 +42,10 @@ def entry(value):
     arxiv_ids=set(ARXIV_ID.findall(value))
     fused_arxiv_block=(len(arxiv_ids)>=2 and len(re.findall(r'\b(?:18|19|20)\d{2}\b',value))>=2
                        and len(value)/len(arxiv_ids)<900)
-    return bool(damaged_block or fused_arxiv_block or (matches and matches[0].start()==0 and (len(matches)>1 or METADATA.search(value))) or
+    numbered=list(FUSED_NUMBERED.finditer(value))
+    fused_numbered_block=(len(numbered)>=2 and len(re.findall(r'\b(?:18|19|20)\d{2}\b',value))>=2
+                          and len(value)/len(numbered)<900 and bool(METADATA.search(value)))
+    return bool(damaged_block or fused_arxiv_block or fused_numbered_block or (matches and matches[0].start()==0 and (len(matches)>1 or METADATA.search(value))) or
                 (NUMBERED.match(value) and re.search(r'\b(?:18|19|20)\d{2}\b',value) and METADATA.search(value)))
 
 
@@ -78,6 +85,7 @@ def select(docs):
         # OCR heading was missed. Require fresh entry evidence on that page.
         if active and not any(entry(v) for v in values):active=False
         for i,(p,value) in enumerate(zip(paragraphs,values)):
+            if getattr(p,'layout_label','')=='abandon':continue
             heading=bool(HEADING.fullmatch(value))
             # A scanned separator or damaged running title can sit between a
             # bibliography heading and its first real citation. Its text is
@@ -86,6 +94,10 @@ def select(docs):
             section_title=bool(re.match(r'^(?:appendix|chapter|discussion|conclusion)\b',value,re.I))
             heading_bridge=(getattr(p,'layout_label','')=='title' and not heading and
                 (i<=bridge_until or bool(next_entries)) and not section_title)
+            # IEEE author biographies often follow references on the same
+            # page without a section title. Do not exempt or translate them as
+            # part of the bibliography just because the heading remains active.
+            if active and AUTHOR_BIO.match(value):active=False
             if heading:
                 # A table of contents entry does not open an exempt section.
                 candidates=[]
@@ -118,6 +130,20 @@ def select(docs):
             for p in paragraphs[start+1:end]:
                 if id(p) not in known:selected.append((page,p,'appendix_contents'));known.add(id(p))
             break
+    # Running matter is often split differently on each page. Sending a
+    # repeated long header to the model can make it duplicate the translated
+    # title and spill over the top margin. Leave source glyphs in place when
+    # the same abandoned text recurs on separate pages.
+    repeated={}
+    for page in pages:
+        for p in getattr(page,'pdf_paragraph',[]):
+            value=text(p)
+            if getattr(p,'layout_label','')=='abandon' and len(value)>=45:
+                repeated.setdefault(value,[]).append((page,p))
+    for occurrences in repeated.values():
+        if len({id(page) for page,_ in occurrences})<2:continue
+        for page,p in occurrences:
+            if id(p) not in known:selected.append((page,p,'repeated_running_matter'));known.add(id(p))
     return selected
 
 

@@ -135,6 +135,37 @@ def test_damaged_leading_entry_and_interleaved_ocr_still_identify_a_bibliography
         'Writer, H. F. (1994). Oxford University Press. '+('More body prose. '*40))
 
 
+def test_split_first_entry_and_fused_numbered_column_stop_before_author_bio():
+    heading=paragraph('REFERENCES .','title')
+    fragments=[paragraph('1'),paragraph('Laposky, A'),paragraph('.','title')]
+    fused=paragraph('D., et al., Sleep and circadian rhythms. FEBS letters, 2008. '
+        '582(1): p. 142-151. 2. Wulff, K., et al., Sleep disruption. '
+        'Nature Reviews Neuroscience, 2010. 11(8): p. 589-599. '
+        '3. Berry, R.B., et al., The scoring manual. AASM, 2012. 176(2): p. 7.')
+    continuation=paragraph('18. Dai, Y., et al., Sleep stage classification. '
+        'IEEE Journal, 2023. 27(9): p. 4204-4215.')
+    bio=paragraph('MUHAMMAD SUDIPTO SIAM DIP received the B.Sc. degree in Electrical Engineering.')
+    bio_tail=paragraph('His current research interests include signal processing.')
+    doc=document([heading,*fragments,fused],[continuation,bio,bio_tail])
+    assert entry(fused.unicode)
+    assert [p for _,p,_ in select(doc)]==[heading,*fragments,fused,continuation]
+
+
+def test_numbered_methods_and_result_prose_are_not_bibliography():
+    methods=paragraph('1. Smith, J. collected data in 2020. 2. Jones, A. analyzed 12 records in 2021. '
+        'The study used two steps to reduce bias.')
+    assert not entry(methods.unicode)
+    assert select(document([methods]))==[]
+
+
+def test_repeated_running_header_is_kept_original_without_exempting_body():
+    header='A Long Paper Title: A Framework for Automatic Analysis of Complex Signals'
+    first=paragraph(header,'abandon');second=paragraph(header,'abandon')
+    body=paragraph('We evaluate the framework on two datasets.')
+    chosen=select(document([first,body],[second]))
+    assert [(p,reason) for _,p,reason in chosen]==[(first,'repeated_running_matter'),(second,'repeated_running_matter')]
+
+
 def test_native_filter_keeps_compositions_and_never_submits_references(tmp_path):
     from babeldoc.format.pdf.document_il.midend.il_translator_llm_only import ILTranslatorLLMOnly as Native
     a=paragraph(APA);body=paragraph('This is the main text.');doc=document([a,body])

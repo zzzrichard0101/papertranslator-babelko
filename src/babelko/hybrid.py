@@ -25,7 +25,7 @@ NUMBER_SPINE=re.compile(
     r"\d+<style\s+id=['\"]\d+['\"]>[,.]</style>\d+|"
     +PLACEHOLDER.pattern+
     r"|(?<![A-Za-z0-9])(?:\d+[A-Za-z][A-Za-z0-9]*|[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|[+-]?\d+(?:\.\d+)?)(?![A-Za-z0-9])")
-VALIDATION_POLICY_REVISION='audited-heuristic-exception-1'
+VALIDATION_POLICY_REVISION='audited-heuristic-exception-2'
 OUTPUT_POLICY_REVISION='identifier-rows-and-code-3'
 AUDITABLE_HEURISTICS=frozenset({'코드 함수 식별자 변경','한국어 문장 안에 영어 원문 구절 미번역','본문 과도 축약'})
 
@@ -187,6 +187,17 @@ def errors(source,target,label='text'):
     try:validate_items([dict(id=0,input=source)],[dict(id=0,output=target)])
     except (ValueError,TypeError) as exc:found.append(str(exc))
     if not isinstance(target,str):return found
+    # A model can return a syntactically valid styled paragraph while copying
+    # its own translation twice. The native compositor then prints the second
+    # copy outside the allotted line. Reject only a long repeated prefix that
+    # was not already repeated in the source.
+    clean_source=re.sub(r'\s+',' ',plain(source)).strip()
+    clean_target=re.sub(r'\s+',' ',plain(target)).strip()
+    if len(clean_source)>=45 and len(clean_target)>=90:
+        prefix=clean_target[:min(60,max(45,len(clean_target)//5))]
+        source_prefix=clean_source[:min(60,max(45,len(clean_source)//5))]
+        if clean_target.count(prefix)>=2 and clean_source.count(source_prefix)<2:
+            found.append('번역문 앞부분 반복')
     if re.search(r'\bnumber\s+and\s+types\s+of\b',plain(source),re.I) and not re.search(r'유형|종류|형태|범주|분류',plain(target)):
         found.append('병렬 개념 누락: 원문의 개수와 유형을 모두 명시하세요.')
     if re.search(r'\b(?:a\s+)?few\s+tenths\b',plain(source),re.I) and re.search(r'몇\s*분의\s*(?:일|하나|1)',plain(target)):

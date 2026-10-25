@@ -55,6 +55,16 @@ def test_repeated_diagram_identifiers_keep_their_exact_occurrences():
     assert errors(row,row[:-5])
 
 
+def test_model_repeating_a_long_styled_translation_is_rejected():
+    source=("<style id='1'>Dip et al</style><style id='3'>: NeuroSleepNet: "
+            'An Explainable Multi-Head Attention-Based Framework with Spatial Learning</style>')
+    clause='NeuroSleepNet: 공간 학습을 이용한 설명 가능한 다중 헤드 어텐션 기반 프레임워크'
+    doubled=f"<style id='1'>Dip et al</style>: {clause}<style id='3'>Dip et al</style>: {clause}"
+    assert '번역문 앞부분 반복' in errors(source,doubled)
+    assert '번역문 앞부분 반복' not in errors(source,
+        "<style id='1'>Dip 외</style><style id='3'>: 공간 학습을 이용한 설명 가능한 다중 헤드 어텐션 기반 프레임워크</style>")
+
+
 def test_unique_dataset_identifier_row_is_literal_but_heading_is_not():
     from babelko.hybrid import literal
     row='MME SQA-I POPE VQAv2 LLaVA-W'

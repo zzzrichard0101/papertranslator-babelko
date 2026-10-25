@@ -2,6 +2,13 @@ import re
 import pymupdf as fitz
 
 
+def repeated_top_text(spans,page_height):
+    """Find an accidentally doubled long running header in rendered text."""
+    limit=min(60,page_height*.07)
+    top=re.sub(r'\s+','', ''.join(s['text'] for s in spans if s['bbox'][1]<limit))
+    return len(top)>=90 and top.count(top[:45])>=2
+
+
 def inspect_output(path,selected,extracted_pages=None,source_path=None):
     issues=[];pages=[]
     inherited=[]
@@ -19,6 +26,8 @@ def inspect_output(path,selected,extracted_pages=None,source_path=None):
             textpage=page.get_textpage(flags=fitz.TEXTFLAGS_TEXT);text=page.get_text(textpage=textpage)
             if extracted_pages is not None:extracted_pages.append(text)
             spans=[s for b in page.get_text('dict',textpage=textpage)['blocks'] if 'lines' in b for l in b['lines'] for s in l['spans']]
+            if repeated_top_text(spans,page.cropbox.height):
+                issues.append(dict(code='repeated_top_text',page=i+1))
             # Text extraction uses unrotated page coordinates; page.rect is in
             # display coordinates. Compare in one space, including rotated PDFs.
             display=[fitz.Rect(s['bbox'])*page.rotation_matrix for s in spans]
@@ -29,7 +38,7 @@ def inspect_output(path,selected,extracted_pages=None,source_path=None):
             if replacement_count>source_count:
                 issues.append(dict(code='new_replacement_glyph',page=i+1,count=replacement_count-source_count))
             pages.append(dict(source_page=selected[i]+1 if i<len(selected) else None,korean_characters=len(re.findall(r'[가-힣]',text)),text_characters=len(text),outside_page=len(overflow),inherited_replacement_glyphs=min(replacement_count,source_count)))
-    return dict(status='passed' if not issues else 'failed',scope='page count, glyph extraction and page bounds; not semantic or full overlap certification',issues=issues,pages=pages)
+    return dict(status='passed' if not issues else 'failed',scope='page count, glyph extraction, page bounds and repeated top text; not semantic or full overlap certification',issues=issues,pages=pages)
 
 
 

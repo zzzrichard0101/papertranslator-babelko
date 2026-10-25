@@ -1,6 +1,7 @@
 from babelko.validation import tracking_status
 from babelko.storage import save
 from babelko.quantity_relations import REVISION as QUANTITY_RELATIONS_REVISION
+from babelko.hybrid import VALIDATION_POLICY_REVISION
 
 
 import pytest
@@ -82,7 +83,7 @@ def test_old_semantic_certificate_cannot_reuse_completed_job(tmp_path,monkeypatc
         from babelko.render_coverage import REVISION as RENDER_REVISION
         save(out/'FigureLegends.json',dict(revision=FIGURE_REVISION,status='passed'))
         save(out/'Quality.json',dict(meaning_assurance=dict(revision=revision),quantity_relations_revision=QUANTITY_RELATIONS_REVISION,references=dict(revision=REFERENCES_REVISION),
-            translation_guards=dict(revision=GUARDS_REVISION),figures=dict(revision=FIGURE_REVISION,status='passed'),
+                translation_guards=dict(revision=GUARDS_REVISION,validation_policy=VALIDATION_POLICY_REVISION),figures=dict(revision=FIGURE_REVISION,status='passed'),
             rendered_prose=dict(revision=RENDER_REVISION)))
         value=dict(protocol=PROTOCOL,ocr_revision=OCR_REVISION,mode='hybrid',status='completed',
             output=str(out),output_hashes={'Quality.json':digest(out/'Quality.json')},source_sha256=digest(folder/'Original.pdf'))
@@ -104,6 +105,11 @@ def test_old_semantic_certificate_cannot_reuse_completed_job(tmp_path,monkeypatc
     save(folder/'state.json',expected)
     with pytest.raises(RuntimeError,match='entered updated processing'):pipeline.run(folder)
     state('old-auditor')
+    with pytest.raises(RuntimeError,match='entered updated processing'):pipeline.run(folder)
+    value=state(REVISION)
+    stale=read(out/'Quality.json');stale['translation_guards']['validation_policy']='old-validator'
+    save(out/'Quality.json',stale);value['output_hashes']['Quality.json']=digest(out/'Quality.json')
+    save(folder/'state.json',value)
     with pytest.raises(RuntimeError,match='entered updated processing'):pipeline.run(folder)
     value=state(REVISION)
     save(out/'Quality.json',dict(meaning_assurance=dict(revision=REVISION)))
@@ -156,7 +162,7 @@ def test_experimental_completed_job_requires_current_spatial_and_context_evidenc
     for region_revision,context_revision,region_status in [(REGIONS,CONTEXT,'passed'),('old',CONTEXT,'passed'),(REGIONS,'old','passed'),(REGIONS,CONTEXT,'failed')]:
         save(out/'FigureLegends.json',dict(revision=FIGURES,status='passed'))
         save(out/'Quality.json',dict(meaning_assurance=dict(revision=REVISION),quantity_relations_revision=QUANTITY_RELATIONS_REVISION,references=dict(revision=REFERENCES),
-            translation_guards=dict(revision=GUARDS),figures=dict(revision=FIGURES,status='passed'),
+                translation_guards=dict(revision=GUARDS,validation_policy=VALIDATION_POLICY_REVISION),figures=dict(revision=FIGURES,status='passed'),
             rendered_prose=dict(revision=RENDER),region_coverage=dict(revision=region_revision,status=region_status),
             document_context=dict(revision=context_revision)))
         state=dict(protocol=PROTOCOL,ocr_revision=OCR_REVISION,mode='hybrid',status='completed',snapshot=dict(experimental_pipeline=True),
@@ -192,7 +198,7 @@ def test_completed_job_with_old_render_qa_rechecks_saved_pdf_without_translation
     sha=digest(folder/'Original.pdf')
     save(out/'Quality.json',dict(source_sha256=sha,quantity_relations_revision=QUANTITY_RELATIONS_REVISION,checks=dict(status='passed',issues=[]),
         translation_tracking=dict(status='passed'),meaning_assurance=dict(revision=ASSURANCE_REVISION,status='passed'),
-        translation_guards=dict(revision=GUARDS_REVISION),references=dict(revision=REFERENCES_REVISION),
+        translation_guards=dict(revision=GUARDS_REVISION,validation_policy=VALIDATION_POLICY_REVISION),references=dict(revision=REFERENCES_REVISION),
         figures=dict(revision=FIGURE_REVISION,status='passed'),hybrid_output_policy=OUTPUT_POLICY_REVISION,
         rendered_prose=dict(revision='old-long-only'),unresolved_translation_failures=[]))
     state=dict(protocol=PROTOCOL,ocr_revision=OCR_REVISION,status='completed',mode='hybrid',
@@ -251,7 +257,7 @@ def test_completed_scanned_index_is_restored_from_saved_export_without_model(tmp
     sha=digest(source)
     save(out/'Quality.json',dict(source_sha256=sha,quantity_relations_revision=QUANTITY_RELATIONS_REVISION,checks=dict(status='passed',issues=[]),
         translation_tracking=dict(status='passed'),meaning_assurance=dict(revision=ASSURANCE_REVISION,status='passed'),
-        translation_guards=dict(revision=GUARDS_REVISION),references=dict(revision=REFERENCES_REVISION,
+            translation_guards=dict(revision=GUARDS_REVISION,validation_policy=VALIDATION_POLICY_REVISION),references=dict(revision=REFERENCES_REVISION,
             paragraphs=[dict(source_page=2,reason='index_section')]),
         figures=dict(revision=FIGURE_REVISION,status='passed'),hybrid_output_policy=OUTPUT_POLICY_REVISION,
         rendered_prose=dict(revision=RENDER_REVISION),scan_recovery=dict(revision=SCAN_REVISION),

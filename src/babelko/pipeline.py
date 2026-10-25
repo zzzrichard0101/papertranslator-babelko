@@ -71,10 +71,11 @@ def check_revision_currency(state, quality):
     if hybrid:
         from .assurance import REVISION as ASSURANCE_REVISION
         from .semantic_guards import REVISION as GUARDS_REVISION
-        from .hybrid import OUTPUT_POLICY_REVISION
+        from .hybrid import OUTPUT_POLICY_REVISION,VALIDATION_POLICY_REVISION
         result.update(
             meaning=(quality.get('meaning_assurance') or {}).get('revision') == ASSURANCE_REVISION,
-            guards=(quality.get('translation_guards') or {}).get('revision') == GUARDS_REVISION,
+            guards=((quality.get('translation_guards') or {}).get('revision') == GUARDS_REVISION
+                    and (quality.get('translation_guards') or {}).get('validation_policy') == VALIDATION_POLICY_REVISION),
             output_policy=quality.get('hybrid_output_policy') == OUTPUT_POLICY_REVISION,
         )
     if state.get('snapshot', {}).get('experimental_pipeline'):
