@@ -78,3 +78,26 @@ def test_repeated_incomplete_documents_hold_batch(tmp_path):
     assert corpus.hold_after_repeated_failures(tmp_path,recent+[('third','partial')])
     hold=json.loads((tmp_path/'batch-hold.json').read_text(encoding='utf-8'))
     assert len(hold['recent'])==3
+
+
+def test_cancelled_worker_does_not_start_the_next_paper(tmp_path, monkeypatch):
+    base=tmp_path/'corpus';base.mkdir()
+    source=tmp_path/'paper.pdf';source.write_bytes(b'checked source')
+    cases=[dict(key=f'paper-{i}',source=str(source),sha256=corpus.digest(source)) for i in range(30)]
+    (base/'manifest.json').write_text(json.dumps(dict(cases=cases)),encoding='utf-8')
+    job=tmp_path/'job';job.mkdir()
+    (job/'state.json').write_text(json.dumps(dict(status='cancelled')),encoding='utf-8')
+    records=base/'runs';records.mkdir()
+    (records/'paper-0.json').write_text(json.dumps(dict(job=str(job),status='paused')),encoding='utf-8')
+    local=tmp_path/'local';(local/'PaperTranslatorBabelKO/assets').mkdir(parents=True)
+    (base/'home/assets').mkdir(parents=True)
+    monkeypatch.setenv('LOCALAPPDATA',str(local))
+    monkeypatch.setattr(corpus,'app_busy',lambda *_:False)
+    monkeypatch.setattr(corpus,'another_model_busy',lambda:False)
+    calls=[]
+    monkeypatch.setattr(corpus.subprocess,'run',lambda *args,**kwargs:(calls.append(args),type('Result',(),dict(returncode=1))())[1])
+    monkeypatch.setattr(corpus,'summarize',lambda *_:dict(total=30,completed=0,rows=[]))
+    monkeypatch.setattr(corpus,'stop_completed_schedule',lambda *_:None)
+    corpus.run(base)
+    assert len(calls)==1
+    assert not (records/'paper-1.json').exists()

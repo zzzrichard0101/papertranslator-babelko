@@ -1,7 +1,16 @@
-import asyncio,copy,datetime,json,os,shutil,time,uuid,threading
-from contextlib import ExitStack,nullcontext
-import psutil
+import asyncio
+import copy
+import datetime
+import json
+import os
+import shutil
+import threading
+import time
+import uuid
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
+
+import psutil
 import pymupdf as fitz
 from .storage import root,project,read,save,digest
 from .upstream import prepare,assets
@@ -37,6 +46,84 @@ def restore_scanned_index(original,korean,state,reference_report):
     restored=restore_original_index(original,korean,state['selected'],report)
     if restored!=pages:raise RuntimeError('스캔 색인 원본 복원 쪽수 불일치')
     return restored
+
+
+def check_revision_currency(state, quality):
+    """Read every saved-output policy revision from one Quality.json snapshot.
+
+    The completed-job shortcut and PDF-only revalidation intentionally use
+    different subsets of these checks; their revision definitions live here.
+    Imports stay local because some policies load the optional PDF engine.
+    """
+    from .quantity_relations import REVISION as QUANTITY_REVISION
+    from .render_coverage import REVISION as RENDER_REVISION
+    from .figure_legends import REVISION as FIGURE_REVISION
+    from .references import REVISION as REFERENCE_REVISION
+
+    figures = quality.get('figures') or {}
+    result = dict(
+        quantity=quality.get('quantity_relations_revision') == QUANTITY_REVISION,
+        rendered=(quality.get('rendered_prose') or {}).get('revision') == RENDER_REVISION,
+        figures=figures.get('revision') == FIGURE_REVISION and figures.get('status') == 'passed',
+        references=(quality.get('references') or {}).get('revision') == REFERENCE_REVISION,
+    )
+    hybrid = state.get('mode') == 'hybrid'
+    if hybrid:
+        from .assurance import REVISION as ASSURANCE_REVISION
+        from .semantic_guards import REVISION as GUARDS_REVISION
+        from .hybrid import OUTPUT_POLICY_REVISION
+        result.update(
+            meaning=(quality.get('meaning_assurance') or {}).get('revision') == ASSURANCE_REVISION,
+            guards=(quality.get('translation_guards') or {}).get('revision') == GUARDS_REVISION,
+            output_policy=quality.get('hybrid_output_policy') == OUTPUT_POLICY_REVISION,
+        )
+    if state.get('snapshot', {}).get('experimental_pipeline'):
+        from .region_ledger import REVISION as REGION_REVISION
+        from .document_context import REVISION as CONTEXT_REVISION
+        regions = quality.get('region_coverage') or {}
+        result.update(
+            regions=regions.get('revision') == REGION_REVISION and regions.get('status') == 'passed',
+            context=(quality.get('document_context') or {}).get('revision') == CONTEXT_REVISION,
+        )
+    if state.get('ocr_pages'):
+        from .scan_evidence import REVISION as SCAN_REVISION, LAYOUT_REVISION
+        scan = quality.get('scan_recovery') or {}
+        layout = scan.get('layout')
+        result.update(
+            scan=scan.get('revision') == SCAN_REVISION,
+            scan_layout=not layout or layout.get('revision') == LAYOUT_REVISION,
+        )
+    return result
+
+
+def open_worker_lock(lock):
+    """Claim the worker lock and remove it if writing ownership fails."""
+    try:
+        lock_file = lock.open('x')
+    except FileExistsError:
+        try:
+            owner = read(lock)
+            process = psutil.Process(owner['pid'])
+            alive = abs(process.create_time() - owner['created']) < 1
+        except psutil.NoSuchProcess:
+            alive = False
+        except (OSError, ValueError, KeyError, psutil.Error) as exc:
+            raise RuntimeError('작업 잠금 파일 확인 필요: 다른 실행을 먼저 확인하세요.') from exc
+        if alive:
+            raise RuntimeError('새 번역기의 다른 작업이 실행 중입니다.')
+        lock.unlink()
+        lock_file = lock.open('x')
+    try:
+        json.dump(dict(pid=os.getpid(), created=psutil.Process().create_time()), lock_file)
+        lock_file.flush()
+        os.fsync(lock_file.fileno())
+    except BaseException:
+        try:
+            lock_file.close()
+        finally:
+            lock.unlink(missing_ok=True)
+        raise
+    return lock_file
 
 
 def create(source,destination,pages='',ocr='auto',mode='auto',experimental_pipeline=False):
@@ -103,11 +190,9 @@ def revalidate_saved_output(folder,state,progress):
     if any(not (out/name).is_file() or digest(out/name)!=state['output_hashes'].get(name) for name in names):return False
     if digest(folder/'Original.pdf')!=state.get('source_sha256'):return False
     quality=read(out/'Quality.json')
-    from .quantity_relations import REVISION as QUANTITY_RELATIONS_REVISION
-    if quality.get('quantity_relations_revision')!=QUANTITY_RELATIONS_REVISION:return False
-    from .render_coverage import REVISION as RENDER_REVISION
-    stale_render=(state.get('status')=='completed' and
-        quality.get('rendered_prose',{}).get('revision')!=RENDER_REVISION)
+    revisions=check_revision_currency(state,quality)
+    if not revisions['quantity']:return False
+    stale_render=state.get('status')=='completed' and not revisions['rendered']
     expected_index=scanned_index_pages(state,quality.get('references',{}))
     stale_index=(state.get('status')=='completed' and
         quality.get('restored_original_index_pages',[])!=expected_index)
@@ -116,32 +201,12 @@ def revalidate_saved_output(folder,state,progress):
     refresh_completed=state.get('status')=='completed' and (stale_render or stale_index or stale_images)
     if state.get('status')=='completed' and not refresh_completed:return False
     if refresh_completed:
-        from .references import REVISION as REFERENCES_REVISION
-        if quality.get('references',{}).get('revision')!=REFERENCES_REVISION:return False
-        if state.get('mode')=='hybrid':
-            from .assurance import REVISION as ASSURANCE_REVISION
-            from .semantic_guards import REVISION as GUARDS_REVISION
-            if (quality.get('meaning_assurance',{}).get('revision')!=ASSURANCE_REVISION or
-                quality.get('translation_guards',{}).get('revision')!=GUARDS_REVISION):return False
-        if state.get('snapshot',{}).get('experimental_pipeline'):
-            from .region_ledger import REVISION as REGION_REVISION
-            from .document_context import REVISION as CONTEXT_REVISION
-            if (quality.get('region_coverage',{}).get('revision')!=REGION_REVISION or
-                quality.get('region_coverage',{}).get('status')!='passed' or
-                quality.get('document_context',{}).get('revision')!=CONTEXT_REVISION):return False
-        if state.get('ocr_pages'):
-            from .scan_evidence import REVISION as SCAN_REVISION,LAYOUT_REVISION
-            scan=quality.get('scan_recovery',{})
-            if (scan.get('revision')!=SCAN_REVISION or
-                (scan.get('layout') and scan['layout'].get('revision')!=LAYOUT_REVISION)):return False
-    from .figure_legends import REVISION as FIGURE_REVISION
-    if (quality.get('figures',{}).get('revision')!=FIGURE_REVISION or
-        quality.get('figures',{}).get('status')!='passed' or
+        required=('references','meaning','guards','regions','context','scan','scan_layout')
+        if not all(revisions.get(name,True) for name in required):return False
+    if (not revisions['figures'] or
         any(not (out/name).is_file() or digest(out/name)!=state['output_hashes'].get(name)
             for name in ('FigureLegends.html','FigureLegends.json'))):return False
-    if state.get('mode')=='hybrid':
-        from .hybrid import OUTPUT_POLICY_REVISION
-        if quality.get('hybrid_output_policy')!=OUTPUT_POLICY_REVISION:return False
+    if not revisions.get('output_policy',True):return False
     expected_checks='passed' if refresh_completed else 'failed'
     if (quality.get('source_sha256')!=state['source_sha256'] or quality.get('checks',{}).get('status')!=expected_checks
             or quality.get('unresolved_translation_failures')
@@ -208,55 +273,34 @@ def run(folder):
     if state.get('protocol')!=PROTOCOL or state.get('ocr_revision')!=OCR_REVISION:raise RuntimeError('이 작업의 처리 버전이 다릅니다. 원본으로 새 작업을 시작하세요.')
     if state.get('status')=='completed' and state.get('output_hashes'):
         out=Path(state['output'])
-        from .assurance import REVISION
-        from .references import REVISION as REFERENCES_REVISION
-        from .quantity_relations import REVISION as QUANTITY_RELATIONS_REVISION
-        current=state.get('mode')!='hybrid'
-        if not current and (out/'Quality.json').is_file():
-            current=read(out/'Quality.json').get('meaning_assurance',{}).get('revision')==REVISION
-        if current and (out/'Quality.json').is_file():
-            current=read(out/'Quality.json').get('quantity_relations_revision')==QUANTITY_RELATIONS_REVISION
-        if current and state.get('mode')=='hybrid' and (out/'Quality.json').is_file():
-            from .semantic_guards import REVISION as GUARDS_REVISION
-            current=read(out/'Quality.json').get('translation_guards',{}).get('revision')==GUARDS_REVISION
-        if current and (out/'Quality.json').is_file():
-            from .figure_legends import REVISION as FIGURE_REVISION
-            figures=read(out/'Quality.json').get('figures',{})
-            current=figures.get('revision')==FIGURE_REVISION and figures.get('status')=='passed'
-        if current and (out/'Quality.json').is_file():
-            from .render_coverage import REVISION as RENDER_REVISION
-            current=read(out/'Quality.json').get('rendered_prose',{}).get('revision')==RENDER_REVISION
-        current=current and (out/'Quality.json').is_file() and read(out/'Quality.json').get('references',{}).get('revision')==REFERENCES_REVISION
-        if current and state.get('snapshot',{}).get('experimental_pipeline'):
-            from .region_ledger import REVISION as REGION_REVISION
-            from .document_context import REVISION as CONTEXT_REVISION
-            quality=read(out/'Quality.json')
-            current=quality.get('region_coverage',{}).get('revision')==REGION_REVISION and quality.get('region_coverage',{}).get('status')=='passed' and quality.get('document_context',{}).get('revision')==CONTEXT_REVISION
-        if current and state.get('ocr_pages'):
-            from .scan_evidence import REVISION as SCAN_REVISION,LAYOUT_REVISION
-            scan=read(out/'Quality.json').get('scan_recovery',{})
-            current=scan.get('revision')==SCAN_REVISION and (not scan.get('layout') or scan['layout'].get('revision')==LAYOUT_REVISION)
-        if current and (out/'Quality.json').is_file():
-            quality=read(out/'Quality.json')
-            current=quality.get('restored_original_index_pages',[])==scanned_index_pages(state,quality.get('references',{}))
-        if current and (out/'Quality.json').is_file():
+        quality_path=out/'Quality.json'
+        if quality_path.is_file():
+            quality=read(quality_path)
+            revisions=check_revision_currency(state,quality)
+            # The shortcut preserves its existing policy: output_policy is
+            # checked by saved-PDF revalidation, not by this cache lookup.
+            current=all(value for name,value in revisions.items() if name!='output_policy')
+            current=current and quality.get('restored_original_index_pages',[])==scanned_index_pages(state,quality.get('references',{}))
             from .figure_legends import image_manifest_valid
-            current=image_manifest_valid(out,read(out/'Quality.json').get('figures',{}),state['output_hashes'],verify_files=False)
-        if current and digest(folder/'Original.pdf')==state['source_sha256'] and all((out/name).exists() and digest(out/name)==sha for name,sha in state['output_hashes'].items()):return state
+            current=current and image_manifest_valid(out,quality.get('figures',{}),state['output_hashes'],verify_files=False)
+            if (current and digest(folder/'Original.pdf')==state['source_sha256']
+                    and all((out/name).exists() and digest(out/name)==sha for name,sha in state['output_hashes'].items())):
+                return state
     began=time.perf_counter();lock=root()/'worker.lock'
-    try:lock_file=lock.open('x')
-    except FileExistsError:
+    lock_file=open_worker_lock(lock)
+    try:
+        state.update(pid=os.getpid(),process_created=psutil.Process().create_time())
+        from .performance import Performance,StateWriter
+        performance=Performance(folder)
+        state_writer=StateWriter(folder/'state.json')
+        progress_lock=threading.RLock()
+        selected_positions={page+1:index+1 for index,page in enumerate(state.get('selected',[]))}
+    except BaseException:
         try:
-            owner=read(lock);alive=psutil.pid_exists(owner['pid']) and abs(psutil.Process(owner['pid']).create_time()-owner['created'])<1
-        except (OSError,ValueError,KeyError,psutil.Error):raise RuntimeError('작업 잠금 파일 확인 필요: 다른 실행을 먼저 확인하세요.')
-        if alive:raise RuntimeError('새 번역기의 다른 작업이 실행 중입니다.')
-        lock.unlink();lock_file=lock.open('x')
-    json.dump(dict(pid=os.getpid(),created=psutil.Process().create_time()),lock_file);lock_file.flush();os.fsync(lock_file.fileno())
-    state.update(pid=os.getpid(),process_created=psutil.Process().create_time())
-    from .performance import Performance,StateWriter
-    performance=Performance(folder);state_writer=StateWriter(folder/'state.json')
-    progress_lock=threading.RLock()
-    selected_positions={page+1:index+1 for index,page in enumerate(state.get('selected',[]))}
+            lock_file.close()
+        finally:
+            lock.unlink(missing_ok=True)
+        raise
     def progress(message,percent=None):
         with progress_lock:
             state.update(stage=message,elapsed_seconds=round(time.perf_counter()-began,2))
@@ -399,10 +443,11 @@ def run(folder):
                 progress(message,percent)
             try:
                 from .references import preserve as preserve_references
+                from .source_coverage import capture as capture_source_coverage
                 from .figure_legends import preserve as preserve_figures
                 from .layout_cache import native_layout_cache
                 from .region_ledger import capture as capture_regions
-                with preserve_references(folder),preserve_figures(folder),staged_layout(translator,switch_to_editor,progress) if state['mode']=='hybrid' else nullcontext(),native_layout_cache(folder,input_pdf,config,progress,performance),capture_regions(translator.region_ledger) if translator.experimental_pipeline else nullcontext(),track_translation_pages(current_pages):
+                with capture_source_coverage(folder,input_pdf,cancel,scan_rows),preserve_references(folder),preserve_figures(folder),staged_layout(translator,switch_to_editor,progress) if state['mode']=='hybrid' else nullcontext(),native_layout_cache(folder,input_pdf,config,progress,performance),capture_regions(translator.region_ledger) if translator.experimental_pipeline else nullcontext(),track_translation_pages(current_pages):
                     result=translate(config,layout_progress,cancel,lambda:[e.close() for e in active],on_event=native_event)
                 if cancel():raise InterruptedError('취소됨')
                 if result is None or not result.mono_pdf_path:raise RuntimeError('번역 PDF 생성 결과가 없습니다.')
@@ -466,6 +511,7 @@ def run(folder):
             report['performance']=performance.snapshot()
             report['layout_cache']=read(folder/'layout-cache-report.json') if (folder/'layout-cache-report.json').is_file() else {}
             report['references']=reference_report
+            report['source_coverage']=read(folder/'source-coverage.json') if (folder/'source-coverage.json').is_file() else dict(status='unavailable')
             from .quantity_relations import REVISION as QUANTITY_RELATIONS_REVISION
             report['quantity_relations_revision']=QUANTITY_RELATIONS_REVISION
             report['restored_original_index_pages']=restored_index_pages

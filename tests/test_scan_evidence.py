@@ -1,7 +1,7 @@
 import copy
 from types import SimpleNamespace as NS
 import pytest
-from babelko.scan_evidence import corrections,apply,rule_only,raster_single_glyph,duplicate_title,running_scan_headers
+from babelko.scan_evidence import corrections,apply,rule_only,raster_single_glyph,duplicate_title,running_scan_headers,suspect_regions
 from babelko.translator import number_errors
 
 
@@ -50,6 +50,48 @@ def test_numbered_scan_running_header_stays_in_original_raster():
     chapter=NS(unicode='A SEARCH FOR HOME',layout_label='title',box=box(295,345))
     unrelated=NS(unicode='113 independent experiments',layout_label='title',box=box(650,675))
     assert running_scan_headers([header,overlap,chapter,unrelated],842)=={id(header),id(overlap)}
+
+
+def test_raster_page_with_no_ocr_text_gets_independent_full_page_check():
+    import pymupdf as fitz
+    with fitz.open() as printed:
+        page=printed.new_page(width=400,height=300)
+        page.insert_text((30,100),'Visible words on a scanned page.',fontsize=12)
+        image=page.get_pixmap()
+        with fitz.open() as scanned:
+            raster=scanned.new_page(width=400,height=300)
+            raster.insert_image(raster.rect,pixmap=image)
+            assert raster.get_text().strip()==''
+            assert suspect_regions(raster)==[raster.rect]
+        blank=printed.new_page(width=400,height=300)
+        assert suspect_regions(blank)==[]
+
+
+def test_missing_primary_ocr_text_flows_into_cached_second_reader(tmp_path,monkeypatch):
+    import pymupdf as fitz
+    from babelko.scan_evidence import Reader,evidence
+    from babelko.storage import digest,save
+    folder=tmp_path/'job';folder.mkdir()
+    with fitz.open() as printed:
+        page=printed.new_page(width=400,height=300)
+        page.insert_text((30,100),'Several important source words are visible here.',fontsize=12)
+        image=page.get_pixmap()
+        with fitz.open() as scanned:
+            raster=scanned.new_page(width=400,height=300)
+            raster.insert_image(raster.rect,pixmap=image)
+            scanned.save(folder/'Original.pdf')
+    (folder/'Input.pdf').write_bytes((folder/'Original.pdf').read_bytes())
+    save(folder/'state.json',dict(ocr_pages=[0],source_sha256=digest(folder/'Original.pdf'),
+                                  input_sha256=digest(folder/'Input.pdf')))
+    calls=[]
+    def recognize(self,page,clip=None):
+        calls.append(clip)
+        return [dict(text='Several important source words are visible here.',score=.99,
+                     bbox=[30,85,350,105])]
+    monkeypatch.setattr(Reader,'recognize',recognize)
+    first=evidence(folder,[0]);second=evidence(folder,[0])
+    assert first==second and len(calls)==1
+    assert calls[0]==fitz.Rect(0,0,400,300)
 
 
 def test_two_pixel_reads_can_restore_shuffled_title_without_adding_letters():

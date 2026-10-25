@@ -124,6 +124,9 @@ def main(mode='qwen',experimental=False,diverse=False,source_override=None,pages
             audit_labels={folder.name:'clean'} if experimental else {}
             assert result['status']=='completed',result
             out=Path(result['output']);quality=read(out/'Quality.json')
+            assert quality['source_coverage']['status']=='diagnostic'
+            assert quality['source_coverage']['inspected_pages']==(6 if diverse else 3)
+            assert quality['source_coverage']['candidate_lines']>0
             if experimental:
                 assert quality['region_coverage']['status']=='passed' and quality['region_coverage']['checked_regions']>10
                 assert 'EBP' in quality['document_context']['entries']

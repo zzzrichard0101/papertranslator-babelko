@@ -8,7 +8,7 @@ from pathlib import Path
 import pymupdf as fitz
 from .storage import digest,read,save
 
-REVISION='scan-evidence-1'
+REVISION='scan-evidence-2'
 LAYOUT_REVISION='scan-band-layout-4'
 MODEL_HASHES={
     'ch_PP-OCRv4_det_infer.onnx':'d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9',
@@ -135,7 +135,10 @@ class Reader:
 def suspect_regions(page):
     """Inspect existing OCR, then reread only risky rows, not every book page."""
     spans=[s for b in page.get_text('dict')['blocks'] for line in b.get('lines',[]) for s in line['spans'] if s['text'].strip()]
-    if not spans:return []
+    # This function is reached only for pages selected for OCR. A raster page
+    # with *zero* extracted spans is the most important failure to audit:
+    # span-based risk rules have no anchor and would otherwise skip it entirely.
+    if not spans:return [page.rect] if page.get_image_info() else []
     median=statistics.median(s['size'] for s in spans)
     regions=[]
     for s in spans:

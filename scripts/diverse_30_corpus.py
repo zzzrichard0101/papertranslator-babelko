@@ -367,6 +367,10 @@ def run(base, once=False, case_key=None):
                                ended_at=dt.datetime.now(dt.timezone.utc).isoformat()))
         report = summarize(base)
         print(f'{case["key"]}: {state["status"]}; completed {report["completed"]}/30', flush=True)
+        # A user-requested pause is a batch boundary. Otherwise the scheduler
+        # immediately starts the next paper while its task is being disabled.
+        if state['status'] == 'cancelled':
+            break
         recent.append((case['key'], state['status']))
         if once:
             break

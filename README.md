@@ -73,6 +73,8 @@ New-Item -ItemType Directory -Force results | Out-Null
 
 품질 검사를 통과하지 못한 경우에도 읽어 볼 PDF가 만들어질 수 있습니다. 앱이 **부분 완료(`partial`)**로 표시하면 `Quality.json`에서 문제를 확인하세요. `partial`은 번역 완료나 의미 정확성 인증이 아닙니다. 취소하거나 실패한 작업은 앱의 **이 작업 다시 시작**으로 저장된 번역을 재사용할 수 있지만, 분석과 조판 일부는 다시 실행될 수 있습니다.
 
+`Quality.json`의 `source_coverage`는 원문 PDF 텍스트층 및 이미 실행된 보조 OCR의 글을 번역 직전 문단과 대조한 **진단 기록**입니다. `suspected_missing_lines`와 `pixel_suspected_missing_rows`는 조사할 위치를 알려 주며, 현재는 오탐 검증 중이므로 완료 판정을 자동으로 바꾸지 않습니다. 0이라고 해서 스캔 이미지의 글자나 그림 내부 글자까지 모두 인식했다는 뜻은 아닙니다.
+
 검수가 끝나기 전에 일부 쪽을 확인하려면 `scripts/export_preview.py --job "작업폴더" --pages "17,100"`을 사용할 수 있습니다. 이 확인본은 저장된 번역 후보만 사용하고 모델을 새로 호출하지 않으며, 정식 완료본으로 취급하지 않습니다.
 
 ## 번역은 어떻게 진행되나요?
@@ -139,7 +141,7 @@ OCR을 거친 **색인 페이지**가 확실히 식별되면 한국어 PDF에서
 
 - 설치 다운로드가 끊기면 같은 `setup.ps1` 명령을 다시 실행하세요. 모델 확인은 `.\.venv\Scripts\python.exe scripts\download_models.py --verify-only`로 할 수 있습니다. Qwen만 설치했다면 `--mode qwen`을 추가합니다.
 - `로컬 엔진 시작 실패`가 뜨면 해당 작업 폴더의 `engine-*.log`를 확인하세요. 다른 `llama-server.exe`가 같은 자원을 사용 중인지도 확인합니다.
-- 구현 세부 사항은 [아키텍처](docs/ARCHITECTURE.txt), [성능 점검](docs/PERFORMANCE.txt), [OCR 입력 검증](docs/OCR-AUDIT.txt), [실험 파이프라인](docs/EXPERIMENTAL-PIPELINE.txt), [개발 기록](DEVELOPMENT.txt)에 있습니다. **새 파이프라인 실험**은 결합 모드에서만 선택할 수 있으며 기본 설정은 아닙니다.
+- 구현 순서와 통과 기준은 [범용 PDF 검증·복구 워크플로우](docs/GENERALIZED-PDF-WORKFLOW.md)에 있습니다. 구현 세부 사항은 [아키텍처](docs/ARCHITECTURE.txt), [성능 점검](docs/PERFORMANCE.txt), [OCR 입력 검증](docs/OCR-AUDIT.txt), [실험 파이프라인](docs/EXPERIMENTAL-PIPELINE.txt), [개발 기록](DEVELOPMENT.txt)에 있습니다. **새 파이프라인 실험**은 결합 모드에서만 선택할 수 있으며 기본 설정은 아닙니다.
 
 개발 검사는 `uv run pytest -q`, `uv run python scripts/integration.py`, `uv run python scripts/integration.py --mode hybrid`로 실행합니다. 실제 모델 의미 평가와 공개 PDF 코퍼스 도구는 `scripts/evaluate_meaning.py`, `scripts/accuracy_corpus.py`에 있습니다. 실제 논문 원문에 대한 세 방식의 블라인드 비교 절차와 독립 검토의 요건은 [번역 정확도 평가 절차](docs/ACCURACY-EVALUATION.md)를 참고하세요. 개발용 원문·결과는 로컬 `test_vault/`에만 저장합니다.
 

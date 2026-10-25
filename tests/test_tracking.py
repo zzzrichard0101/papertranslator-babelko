@@ -91,7 +91,14 @@ def test_old_semantic_certificate_cannot_reuse_completed_job(tmp_path,monkeypatc
     monkeypatch.setattr(pipeline,'prepare',lambda:None)
     def stop(*_):raise RuntimeError('entered updated processing')
     monkeypatch.setattr(pipeline,'assets',stop)
+    quality_reads=[]
+    original_read=pipeline.read
+    def count_quality_reads(path):
+        if path==out/'Quality.json':quality_reads.append(path)
+        return original_read(path)
+    monkeypatch.setattr(pipeline,'read',count_quality_reads)
     expected=state(REVISION);assert pipeline.run(folder)==expected
+    assert len(quality_reads)==1
     stale=read(out/'Quality.json');stale['quantity_relations_revision']='old-quantity-check'
     save(out/'Quality.json',stale);expected['output_hashes']['Quality.json']=digest(out/'Quality.json')
     save(folder/'state.json',expected)
@@ -102,6 +109,30 @@ def test_old_semantic_certificate_cannot_reuse_completed_job(tmp_path,monkeypatc
     save(out/'Quality.json',dict(meaning_assurance=dict(revision=REVISION)))
     value['output_hashes']['Quality.json']=digest(out/'Quality.json');save(folder/'state.json',value)
     with pytest.raises(RuntimeError,match='entered updated processing'):pipeline.run(folder)
+
+
+def test_worker_lock_write_failure_removes_file(tmp_path,monkeypatch):
+    import babelko.pipeline as pipeline
+    lock=tmp_path/'worker.lock'
+    def fail_sync(_):raise OSError('disk full')
+    monkeypatch.setattr(pipeline.os,'fsync',fail_sync)
+    with pytest.raises(OSError,match='disk full'):
+        pipeline.open_worker_lock(lock)
+    assert not lock.exists()
+
+
+def test_worker_lock_is_removed_when_state_writer_setup_fails(tmp_path,monkeypatch):
+    import babelko.pipeline as pipeline
+    from babelko.policy import PROTOCOL,OCR_REVISION
+    folder=tmp_path/'jobs'/'job'
+    folder.mkdir(parents=True)
+    save(folder/'state.json',dict(protocol=PROTOCOL,ocr_revision=OCR_REVISION,status='queued'))
+    monkeypatch.setattr(pipeline,'root',lambda:tmp_path)
+    def fail_writer(_):raise OSError('state writer failed')
+    monkeypatch.setattr('babelko.performance.StateWriter',fail_writer)
+    with pytest.raises(OSError,match='state writer failed'):
+        pipeline.run(folder)
+    assert not (tmp_path/'worker.lock').exists()
 
 
 def test_experimental_completed_job_requires_current_spatial_and_context_evidence(tmp_path,monkeypatch):
