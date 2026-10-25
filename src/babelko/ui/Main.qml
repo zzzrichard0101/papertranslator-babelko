@@ -237,7 +237,7 @@ ApplicationWindow {
                         font.weight: Font.Bold
                     }
                     Text {
-                        text: root.page === 3 ? "PDF의 구조와 번역 상태를 살아 있는 지도로 탐색하세요" :
+                        text: root.page === 3 ? "PDF의 단어와 그 관계를 3D 파티클 공간에서 탐색하세요" :
                               root.page === 2 ? "읽는 경험을 취향에 맞게 조정하세요" :
                               root.page === 1 ? "원문과 번역 결과를 이어서 살펴보세요" :
                               "문서를 그대로 읽고, 한국어로 다시 만듭니다"

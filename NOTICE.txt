@@ -9,6 +9,14 @@ Independent scan recovery uses RapidOCR (RapidAI, Apache-2.0) through rapidocr-o
 
 Models and fonts are not included in this source repository. Their upstream licenses and attributions apply separately. Dependency and asset notices must accompany a future binary distribution. This is a source-based development installation, not a bundled standalone EXE release.
 
+The 3D word-particle view uses Qt Quick 3D and Qt Quick 3D Particles through
+PySide6-Addons 6.10.3. Qt documents Qt Quick 3D as available under commercial
+or GPLv3 terms: https://doc.qt.io/qt-6/qtquick3d-index.html
+Qt and PySide6 runtime files are installed as dependencies and are not copied
+into this source repository. Their accompanying license notices apply.
+Local word graph layout uses NetworkX (BSD-3-Clause):
+https://github.com/networkx/networkx/blob/main/LICENSE.txt
+
 The optional installer downloads llama.cpp b11718 (MIT) and its Windows CUDA
 12.4 runtime binaries (NVIDIA terms) from the official release:
 https://github.com/ggml-org/llama.cpp/releases/tag/b11718

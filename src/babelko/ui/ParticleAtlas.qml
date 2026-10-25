@@ -1,50 +1,56 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Particles
 
 Item {
     id: atlas
-    property var pageData: backend.atlas
-    property var selected: backend.atlasSelection
+    objectName: "wordNebula"
+    property var wordData: backend.wordSpace
+    property int selectedIndex: -1
+    property bool flatMode: false
+    property bool spaceFailed: false
+    property string searchMessage: ""
+    readonly property bool use3D: backend.supportsSpace && !flatMode && !spaceFailed
     readonly property bool animated: visible && backend.settings.motion && !backend.job.active
-    readonly property color proseColor: "#8EE7DE"
-    readonly property color imageColor: "#D7B5FF"
-    readonly property color tableColor: "#F2CD88"
-    readonly property color warningColor: "#FFAD83"
+    readonly property var selected: selectedIndex >= 0 &&
+                                     selectedIndex < (wordData.points || []).length
+                                     ? wordData.points[selectedIndex] : ({})
 
-    function regionColor(region) {
-        if (region.status === "source_gap_suspected") return warningColor
-        return region.kind === "image" ? imageColor : region.kind === "table" ? tableColor : proseColor
+    onWordDataChanged: { selectedIndex = -1; searchMessage = "" }
+    function chooseWord(index) {
+        if (index < 0 || index >= (wordData.points || []).length) return
+        selectedIndex = index
+        searchMessage = ""
     }
-    function statusLabel(status) {
-        if (status === "source_gap_suspected") return "원문 누락 의심 · 진단 기록"
-        if (status === "source_preserved") return "원본 이미지 영역"
-        if (status === "output_created") return "번역 PDF 생성됨 · 의미 검증 아님"
-        if (status === "processing") return "처리 중"
-        if (status === "outside_selection") return "이번 번역에서 선택하지 않은 쪽"
-        return "번역 전 원문"
+    function searchWord(query) {
+        const needle = query.trim().toLowerCase()
+        if (!needle) return
+        const points = wordData.points || []
+        let partial = -1
+        for (let index = 0; index < points.length; index++) {
+            if (points[index].word === needle) { chooseWord(index); return }
+            if (partial < 0 && points[index].word.indexOf(needle) === 0) partial = index
+        }
+        if (partial >= 0) chooseWord(partial)
+        else searchMessage = "표시된 상위 단어에서 찾지 못했습니다."
     }
-    function stateColor(status) {
-        if (status === "source_gap_suspected") return warningColor
-        if (status === "output_created") return "#80E3A7"
-        if (status === "processing") return "#FFE092"
-        if (status === "outside_selection") return "#6D879A"
-        return "#A7C5D0"
+    function wordIndex(word) {
+        const points = wordData.points || []
+        for (let index = 0; index < points.length; index++)
+            if (points[index].word === word) return index
+        return -1
     }
 
     Rectangle {
         anchors.fill: parent
         radius: 26
         gradient: Gradient {
-            GradientStop { position: 0; color: "#071622" }
-            GradientStop { position: 0.58; color: "#101C34" }
-            GradientStop { position: 1; color: "#231932" }
+            GradientStop { position: 0; color: "#061621" }
+            GradientStop { position: 0.65; color: "#0D1E34" }
+            GradientStop { position: 1; color: "#211833" }
         }
-        border.width: 1
-        border.color: "#385466"
+        border.width: 1; border.color: "#365668"
     }
-
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 22
@@ -53,16 +59,17 @@ Item {
             Layout.fillWidth: true
             ColumnLayout {
                 spacing: 3
-                Text { text: "DOCUMENT CONSTELLATION"; color: "#8CB9C5"; font.pixelSize: 10; font.letterSpacing: 2.1; font.weight: Font.DemiBold }
-                Text { text: "페이지 속 문장과 그림을 탐험하세요"; color: "#EFFBFA"; font.pixelSize: 18; font.weight: Font.Bold }
+                Text { text: "WORD NEBULA  /  LOCAL PDF DATA"; color: "#8DBFCA"; font.pixelSize: 10; font.letterSpacing: 2.0; font.weight: Font.DemiBold }
+                Text { text: "이 문서의 단어가 만든 우주"; color: "#F0FAFB"; font.pixelSize: 18; font.weight: Font.Bold }
             }
             Item { Layout.fillWidth: true }
             Text {
-                text: pageData.total_pages ? pageData.source_page + " / " + pageData.total_pages + "쪽" : "PDF를 선택하세요"
-                color: "#B4D3D9"; font.pixelSize: 13; font.weight: Font.DemiBold
+                text: wordData.status === "ready" ?
+                      wordData.points.length + "개 단어 · " + wordData.analyzed_tokens.toLocaleString() + "회 출현" :
+                      wordData.status === "loading" ? "분석 중" : "PDF를 선택하세요"
+                color: "#B6D5DB"; font.pixelSize: 12
             }
         }
-
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -73,233 +80,147 @@ Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
-
-                Rectangle {
-                    id: paper
-                    readonly property real ratio: pageData.aspect || 0.72
-                    height: Math.min(stage.height - 18, (stage.width - 18) / ratio)
-                    width: height * ratio
-                    anchors.centerIn: parent
-                    radius: 12
-                    color: "#15283B"
-                    border.width: 1
-                    border.color: "#5A7B88"
-                    Image {
-                        anchors.fill: parent
-                        anchors.margins: 3
-                        source: backend.atlasPreview
-                        fillMode: Image.PreserveAspectFit
-                        opacity: 0.16
-                        asynchronous: true
+                Rectangle { anchors.fill: parent; radius: 17; color: "#071523"; border.color: "#26475A" }
+                Loader {
+                    id: cloudLoader
+                    anchors.fill: parent
+                    active: atlas.visible && wordData.status === "ready"
+                    source: atlas.use3D ? "AtlasSpace3D.qml" : "WordCloud2D.qml"
+                    onStatusChanged: {
+                        if (status === Loader.Error && atlas.use3D) atlas.spaceFailed = true
                     }
                 }
-
-                ParticleSystem { id: system; running: atlas.animated }
-                ImageParticle {
-                    system: system; groups: ["text"]
-                    source: "qrc:///particleresources/glowdot.png"
-                    color: atlas.proseColor; alpha: 0.52
-                }
-                ImageParticle {
-                    system: system; groups: ["image"]
-                    source: "qrc:///particleresources/glowdot.png"
-                    color: atlas.imageColor; alpha: 0.5
-                }
-                ImageParticle {
-                    system: system; groups: ["table"]
-                    source: "qrc:///particleresources/glowdot.png"
-                    color: atlas.tableColor; alpha: 0.56
-                }
-                ImageParticle {
-                    system: system; groups: ["suspect"]
-                    source: "qrc:///particleresources/glowdot.png"
-                    color: atlas.warningColor; alpha: 0.7
-                }
-                HoverHandler { id: pointer; enabled: atlas.animated }
-                Attractor {
-                    system: system
-                    enabled: atlas.animated && pointer.hovered
-                    x: pointer.point.position.x - 65
-                    y: pointer.point.position.y - 65
-                    width: 130; height: 130
-                    pointX: 65; pointY: 65
-                    strength: -65
-                    proportionalToDistance: Attractor.InverseLinear
-                    affectedParameter: Attractor.Velocity
+                Binding { target: cloudLoader.item; property: "graph"; value: atlas.wordData; when: cloudLoader.item !== null }
+                Binding { target: cloudLoader.item; property: "selectedIndex"; value: atlas.selectedIndex; when: cloudLoader.item !== null }
+                Binding { target: cloudLoader.item; property: "animated"; value: atlas.animated; when: cloudLoader.item !== null && atlas.use3D }
+                Connections {
+                    target: cloudLoader.item
+                    ignoreUnknownSignals: true
+                    function onWordPicked(index) { atlas.chooseWord(index) }
                 }
 
-                Repeater {
-                    model: pageData.regions || []
-                    delegate: Item {
-                        id: regionItem
-                        required property var modelData
-                        required property int index
-                        readonly property var region: modelData
-                        property real hoverX: 0
-                        property real hoverY: 0
-                        function displaced(baseX, baseY, horizontal) {
-                            if (!regionMouse.containsMouse || !atlas.animated) return horizontal ? baseX : baseY
-                            const dx = baseX - hoverX
-                            const dy = baseY - hoverY
-                            const distance = Math.sqrt(dx * dx + dy * dy)
-                            const push = Math.max(0, 1 - distance / 78) * 26
-                            return (horizontal ? baseX + dx / Math.max(1, distance) * push
-                                               : baseY + dy / Math.max(1, distance) * push)
-                        }
-                        x: paper.x + region.x * paper.width
-                        y: paper.y + region.y * paper.height
-                        width: Math.max(5, region.w * paper.width)
-                        height: Math.max(5, region.h * paper.height)
-
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: region.kind === "image" ? 6 : 3
-                            color: atlas.regionColor(region)
-                            opacity: regionMouse.containsMouse || selected.id === region.id ? 0.22 : 0.075
-                            border.width: regionMouse.containsMouse || selected.id === region.id ? 1 : 0
-                            border.color: atlas.regionColor(region)
-                            Behavior on opacity { NumberAnimation { duration: 180 } }
-                        }
-                        Rectangle {
-                            width: region.status === "source_preserved" ? 0 : 2
-                            height: parent.height
-                            radius: 1
-                            color: atlas.stateColor(region.status)
-                            opacity: region.status === "outside_selection" ? 0.28 : 0.9
-                        }
-                        Emitter {
-                            id: emitter
-                            system: system
-                            anchors.fill: parent
-                            group: region.status === "source_gap_suspected" ? "suspect" : region.kind
-                            enabled: atlas.animated
-                            emitRate: Math.max(2, region.particles / 5)
-                            maximumEmitted: region.particles
-                            lifeSpan: 5000
-                            size: region.kind === "image" ? 5 : 3.6
-                            sizeVariation: 1.2
-                            velocity: PointDirection { xVariation: 5; yVariation: 5 }
-                        }
-                        Repeater {
-                            model: Math.min(10, Math.max(3, Math.ceil(region.particles / 3)))
-                            delegate: Rectangle {
-                                required property int index
-                                readonly property real homeX: ((index * 0.61803398875 + 0.17) % 1) * regionItem.width
-                                readonly property real homeY: ((index * 0.75487766625 + 0.31) % 1) * regionItem.height
-                                x: regionItem.displaced(homeX, homeY, true)
-                                y: regionItem.displaced(homeX, homeY, false)
-                                width: region.kind === "text" ? 2.8 : 3.8
-                                height: width
-                                radius: width / 2
-                                color: atlas.regionColor(region)
-                                opacity: regionMouse.containsMouse ? 0.98 : 0.68
-                                Behavior on x {
-                                    enabled: regionMouse.containsMouse && atlas.animated
-                                    SpringAnimation { spring: 3; damping: 0.32 }
-                                }
-                                Behavior on y {
-                                    enabled: regionMouse.containsMouse && atlas.animated
-                                    SpringAnimation { spring: 3; damping: 0.32 }
-                                }
-                            }
-                        }
-                        MouseArea {
-                            id: regionMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onPositionChanged: (mouse) => {
-                                regionItem.hoverX = mouse.x
-                                regionItem.hoverY = mouse.y
-                            }
-                            onClicked: {
-                                backend.selectAtlasRegion(regionItem.index)
-                                if (atlas.animated) emitter.burst(Math.min(26, region.particles))
-                            }
-                        }
-                    }
+                Column {
+                    anchors.left: parent.left; anchors.top: parent.top
+                    anchors.margins: 16; spacing: 4
+                    Text { text: atlas.use3D ? "◈  CO-OCCURRENCE SPACE" : "◈  WORD FIELD"; color: "#9ED7D5"; font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 1.1 }
+                    Text { text: "크기  빈도     거리  동시 등장     깊이  문서 흐름"; color: "#779EAB"; font.pixelSize: 10 }
+                }
+                UiButton {
+                    anchors.top: parent.top; anchors.right: parent.right
+                    anchors.margins: 10
+                    label: atlas.use3D ? "2D 보기" : backend.supportsSpace && !atlas.spaceFailed ? "3D 보기" : "3D 설치 필요"
+                    symbol: atlas.use3D ? "▤" : "✧"
+                    available: backend.supportsSpace && !atlas.spaceFailed
+                    night: true; accent: "#85DBD5"
+                    onClicked: atlas.flatMode = !atlas.flatMode
                 }
                 Text {
+                    visible: wordData.status === "ready"
+                    anchors.bottom: parent.bottom; anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottomMargin: 16
+                    text: atlas.use3D ? "드래그 회전  ·  휠 확대  ·  단어 클릭" : "휠 확대  ·  단어 클릭"
+                    color: "#9FC8CF"; font.pixelSize: 11
+                }
+                Column {
+                    visible: wordData.status !== "ready"
                     anchors.centerIn: parent
-                    visible: !pageData.total_pages
-                    text: "PDF를 선택하면 문서의 구조가 여기에 나타납니다"
-                    color: "#BDCFD7"; font.pixelSize: 13
+                    width: Math.min(430, parent.width - 40)
+                    spacing: 12
+                    BusyIndicator {
+                        visible: wordData.status === "loading"
+                        running: visible
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                    Text {
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
+                        text: wordData.status === "loading" ? "문서의 단어 관계를 읽는 중입니다…" :
+                              wordData.status === "failed" ? "단어 분석에 실패했습니다. 다시 읽기를 눌러주세요." :
+                              wordData.status === "empty" ? "읽을 수 있는 단어가 없습니다. 스캔본이라면 로컬 OCR 처리 후 다시 읽어주세요." :
+                              "PDF를 선택하면 단어들이 이 공간에 나타납니다."
+                        color: "#D3E8EB"; font.pixelSize: 14
+                    }
                 }
             }
 
             Rectangle {
-                Layout.preferredWidth: 248
+                Layout.preferredWidth: 266
                 Layout.fillHeight: true
-                radius: 19
-                color: "#AA122638"
-                border.color: "#365264"
+                radius: 18
+                color: "#C1112839"
+                border.color: "#385769"
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 17
+                    anchors.margins: 16
                     spacing: 10
-                    Text { text: "구조 · 상태"; color: "#EAF7F7"; font.pixelSize: 15; font.weight: Font.Bold }
-                    Text { text: "한 점의 위치는 원문 PDF의 좌표를 따릅니다."; color: "#A9C7D0"; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                    Rectangle { Layout.fillWidth: true; height: 1; color: "#345060" }
-                    Text { text: "● 문장 · 문단"; color: atlas.proseColor; font.pixelSize: 11 }
-                    Text { text: "● 이미지 영역"; color: atlas.imageColor; font.pixelSize: 11 }
-                    Text { text: "● 표 후보 영역"; color: atlas.tableColor; font.pixelSize: 11 }
-                    Text { text: "● 원문 누락 의심"; color: atlas.warningColor; font.pixelSize: 11 }
-                    Text { text: "│ 초록: 출력 생성 · 금색: 처리 중"; color: "#AFC5C8"; font.pixelSize: 10 }
-                    Text {
-                        text: pageData.regions ? pageData.regions.length + "개 영역 · 누락 의심 " + pageData.suspect_regions + "개" : ""
-                        color: "#B5CCD2"; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true
+                    Text { text: "탐색"; color: "#F1FAFA"; font.pixelSize: 15; font.weight: Font.Bold }
+                    Text { text: "단어를 찾거나 입자를 선택하세요"; color: "#A6C7CF"; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                    TextField {
+                        id: searchField
+                        Layout.fillWidth: true
+                        enabled: wordData.status === "ready"
+                        placeholderText: "단어 검색 ↵"
+                        color: "#F2FBFC"; placeholderTextColor: "#7597A6"
+                        font.pixelSize: 12
+                        background: Rectangle { radius: 9; color: "#1B3445"; border.color: searchField.activeFocus ? "#7BDCD6" : "#38576A" }
+                        onAccepted: atlas.searchWord(text)
                     }
-                    Rectangle { Layout.fillWidth: true; height: 1; color: "#345060" }
+                    Text { text: atlas.searchMessage; visible: text.length > 0; color: "#FFBA97"; font.pixelSize: 10; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                    Rectangle { Layout.fillWidth: true; height: 1; color: "#355062" }
                     Text {
-                        text: selected.excerpt || "영역에 마우스를 올리고 클릭해보세요."
-                        color: "#F1F8FA"; font.pixelSize: 12; wrapMode: Text.Wrap
-                        Layout.fillWidth: true; maximumLineCount: 7; elide: Text.ElideRight
+                        text: selected.word || "입자를 클릭해보세요"
+                        color: selected.color || "#D6EDED"
+                        font.pixelSize: selected.word ? 20 : 13
+                        font.weight: Font.Bold
+                        Layout.fillWidth: true; elide: Text.ElideRight
                     }
                     Text {
-                        text: selected.status ? atlas.statusLabel(selected.status) : ""
-                        color: selected.status === "source_gap_suspected" ? atlas.warningColor : "#9ABBC4"
-                        font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true
+                        text: selected.word ? selected.count + "회 등장  ·  " + selected.page_hits + "쪽에서 발견" :
+                              "자주 나오는 단어일수록 입자가 큽니다."
+                        color: "#B6D0D6"; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true
+                    }
+                    Text {
+                        visible: !!selected.word
+                        text: selected.first_page === selected.last_page ? selected.first_page + "쪽" :
+                              selected.first_page + "–" + selected.last_page + "쪽에 분포"
+                        color: "#8CB6BF"; font.pixelSize: 10; Layout.fillWidth: true
+                    }
+                    Text { text: selected.word ? "함께 등장한 단어" : "많이 등장한 단어"; color: "#A5C7CE"; font.pixelSize: 11; font.weight: Font.DemiBold }
+                    Flow {
+                        Layout.fillWidth: true
+                        width: parent.width
+                        spacing: 5
+                        Repeater {
+                            model: selected.word ? (selected.neighbors || []) : (wordData.points || []).slice(0, 6).map(point => point.word)
+                            delegate: UiButton {
+                                required property string modelData
+                                label: modelData
+                                night: true; accent: "#8EDFD9"
+                                onClicked: atlas.chooseWord(atlas.wordIndex(modelData))
+                            }
+                        }
                     }
                     Item { Layout.fillHeight: true }
-                    UiButton { label: "원문 쪽 열기"; symbol: "↗"; available: pageData.total_pages > 0; Layout.fillWidth: true; night: true; accent: atlas.proseColor; onClicked: backend.openAtlasPage(false) }
-                    UiButton { label: "번역 쪽 열기"; symbol: "↗"; available: pageData.translated_available === true; Layout.fillWidth: true; night: true; accent: atlas.proseColor; onClicked: backend.openAtlasPage(true) }
-                    Text { text: "이 지도는 진단용입니다. 색상만으로 번역 정확성을 판정하지 않습니다."; color: "#8EABB6"; font.pixelSize: 10; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                }
-            }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-            UiButton { label: "‹"; available: pageData.source_page > 1; night: true; accent: atlas.proseColor; onClicked: backend.selectAtlasPage(pageData.source_page - 2) }
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 34
-                radius: 17
-                color: "#1A3446"
-                border.color: "#365B69"
-                Rectangle {
-                    id: pageTrack
-                    x: 15; y: 15; width: parent.width - 30; height: 4; radius: 2; color: "#385467"
-                    Rectangle {
-                        width: pageData.total_pages > 1 ? parent.width * (pageData.source_page - 1) / (pageData.total_pages - 1) : 0
-                        height: parent.height; radius: 2; color: atlas.proseColor
+                    Rectangle { Layout.fillWidth: true; height: 1; color: "#355062" }
+                    Text {
+                        text: wordData.status === "ready" ?
+                              wordData.unique_words.toLocaleString() + "개 고유 단어 중 상위 " + wordData.points.length + "개 표시" : ""
+                        color: "#A6C3CA"; font.pixelSize: 10; wrapMode: Text.Wrap; Layout.fillWidth: true
                     }
-                    Rectangle {
-                        x: pageData.total_pages > 1 ? parent.width * (pageData.source_page - 1) / (pageData.total_pages - 1) - 5 : -5
-                        y: -4; width: 12; height: 12; radius: 6; color: atlas.proseColor
+                    Text {
+                        text: "가까운 거리는 함께 등장한 기록을 나타냅니다. 의미가 같다는 판정은 아닙니다."
+                        color: "#8EABB6"; font.pixelSize: 10; wrapMode: Text.Wrap; Layout.fillWidth: true
+                    }
+                    UiButton {
+                        Layout.fillWidth: true
+                        label: "단어 다시 읽기"; symbol: "↻"
+                        available: wordData.status !== "loading"
+                        night: true; accent: "#8EDFD9"
+                        onClicked: backend.reloadWordSpace()
                     }
                 }
-                MouseArea {
-                    anchors.fill: parent
-                    enabled: pageData.total_pages > 1
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: (mouse) => backend.selectAtlasPage(
-                        Math.min(pageData.total_pages - 1,
-                                 Math.max(0, Math.round((mouse.x - 15) / pageTrack.width * (pageData.total_pages - 1)))))
-                }
             }
-            UiButton { label: "›"; available: pageData.source_page < pageData.total_pages; night: true; accent: atlas.proseColor; onClicked: backend.selectAtlasPage(pageData.source_page) }
         }
     }
 }

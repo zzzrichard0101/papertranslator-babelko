@@ -1,6 +1,7 @@
 """Qt Quick workbench; the PDF pipeline remains in the existing worker."""
 
 import hashlib
+import importlib.util
 import os
 import re
 import subprocess
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import psutil
 import pymupdf
-from PySide6.QtCore import QObject, Property, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, Property, QProcess, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QFontDatabase
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow
@@ -20,10 +21,12 @@ from .pipeline import create
 from .particle_atlas import snapshot as atlas_snapshot
 from .storage import project, read, root, save
 from .ui_settings import DEFAULTS, load as load_settings, store as store_settings
+from .word_space import REVISION as WORD_SPACE_REVISION
 
 
 OUTPUTS = {"Korean.pdf", "Bilingual.pdf", "FigureLegends.html", ""}
 ACTIVE = {"queued", "preparing", "translating", "validating"}
+SPACE_AVAILABLE = importlib.util.find_spec("PySide6.QtQuick3D") is not None
 STAGES = {
     "Parse PDF and Create Intermediate Representation": "원문 PDF 구조 읽기",
     "LayoutParser": "원문 페이지 구조 분석",
@@ -100,6 +103,7 @@ class Window(QObject):
     jobChanged = Signal()
     previewsChanged = Signal()
     atlasChanged = Signal()
+    wordSpaceChanged = Signal()
     errorRaised = Signal(str)
 
     def __init__(self):
@@ -133,6 +137,9 @@ class Window(QObject):
         self._atlas_preview = ""
         self._atlas_selection = {}
         self._atlas_refresh_state = None
+        self._word_space = {"status": "idle", "points": [], "edges": []}
+        self._word_process = None
+        self._word_cache_key = ""
         self._load_last_job()
         self._load_fonts()
         self.engine = QQmlApplicationEngine()
@@ -207,10 +214,108 @@ class Window(QObject):
     def atlasSelection(self):
         return self._atlas_selection
 
+    @Property("QVariantMap", notify=wordSpaceChanged)
+    def wordSpace(self):
+        return self._word_space
+
+    @Property(bool, constant=True)
+    def supportsSpace(self):
+        return SPACE_AVAILABLE
+
     @Slot()
     def showAtlas(self):
-        if not self._atlas.get("source_page"):
-            self.selectAtlasPage(0)
+        self._load_word_space()
+
+    @Slot()
+    def reloadWordSpace(self):
+        self._load_word_space(force=True)
+
+    def _stop_word_process(self):
+        if self._word_process and self._word_process.state() != QProcess.NotRunning:
+            self._word_process.kill()
+            self._word_process.waitForFinished(500)
+        self._word_process = None
+
+    def _word_ocr_dir(self, source):
+        if not self.folder or not self._job_source:
+            return None
+        try:
+            if source.resolve() != Path(self._job_source).resolve():
+                return None
+            original = self.folder / "Original.pdf"
+            if source.stat().st_size != original.stat().st_size:
+                return None
+            ocr_dir = self.folder / "primary-ocr-pages"
+            return ocr_dir if ocr_dir.is_dir() else None
+        except OSError:
+            return None
+
+    def _load_word_space(self, *, force=False):
+        source = Path(self._form["source"])
+        if not source.is_file() or source.suffix.lower() != ".pdf":
+            self._word_space = {"status": "empty", "points": [], "edges": []}
+            self.wordSpaceChanged.emit()
+            return
+        try:
+            stat = source.stat()
+            ocr_dir = self._word_ocr_dir(source)
+            ocr_stamp = ocr_dir.stat().st_mtime_ns if ocr_dir else 0
+            signature = f"{source.resolve()}|{stat.st_size}|{stat.st_mtime_ns}|{ocr_stamp}|{WORD_SPACE_REVISION}"
+            key = hashlib.sha256(signature.encode()).hexdigest()[:24]
+            cache = root() / "word-space" / f"{key}.json"
+            if not force and key == self._word_cache_key and self._word_space["status"] in {"loading", "ready", "empty"}:
+                return
+            if not force and cache.is_file():
+                result = read(cache)
+                if isinstance(result, dict) and result.get("revision") == WORD_SPACE_REVISION:
+                    self._stop_word_process()
+                    self._word_cache_key = key
+                    self._word_space = result
+                    self.wordSpaceChanged.emit()
+                    return
+            self._stop_word_process()
+            self._word_cache_key = key
+            self._word_space = {"status": "loading", "points": [], "edges": []}
+            self.wordSpaceChanged.emit()
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            python = project() / ".venv/Scripts/python.exe"
+            process = QProcess(self)
+            process.setProgram(str(python if python.is_file() else sys.executable))
+            arguments = ["-m", "babelko.word_space", str(source), str(cache)]
+            if ocr_dir:
+                arguments.extend(["--ocr-dir", str(ocr_dir)])
+            process.setArguments(arguments)
+            process.setWorkingDirectory(str(project()))
+            process.finished.connect(
+                lambda code, _status, expected=key, output=cache:
+                self._word_space_finished(expected, output, code))
+            process.errorOccurred.connect(
+                lambda _error, expected=key: self._word_space_error(expected))
+            self._word_process = process
+            process.start()
+        except (OSError, ValueError, TypeError):
+            self._word_space = {"status": "failed", "points": [], "edges": []}
+            self.wordSpaceChanged.emit()
+
+    def _word_space_finished(self, key, output, exit_code):
+        if key != self._word_cache_key:
+            return
+        self._word_process = None
+        try:
+            result = read(output) if exit_code == 0 else None
+            if isinstance(result, dict) and result.get("revision") == WORD_SPACE_REVISION:
+                self._word_space = result
+            else:
+                self._word_space = {"status": "failed", "points": [], "edges": []}
+        except (OSError, ValueError, TypeError):
+            self._word_space = {"status": "failed", "points": [], "edges": []}
+        self.wordSpaceChanged.emit()
+
+    def _word_space_error(self, key):
+        if key != self._word_cache_key:
+            return
+        self._word_space = {"status": "failed", "points": [], "edges": []}
+        self.wordSpaceChanged.emit()
 
     @Slot(int)
     def selectAtlasPage(self, page):
@@ -338,6 +443,10 @@ class Window(QObject):
         self._form[key] = value
         self.formChanged.emit()
         if key == "source":
+            self._stop_word_process()
+            self._word_space = {"status": "idle", "points": [], "edges": []}
+            self._word_cache_key = ""
+            self.wordSpaceChanged.emit()
             self._atlas = {"source_page": 0, "total_pages": 0, "regions": []}
             self._atlas_preview = ""
             self._atlas_selection = {}
@@ -536,6 +645,7 @@ class Window(QObject):
         self._window.show()
 
     def close(self):
+        self._stop_word_process()
         self._window.close()
 
     def grab(self):

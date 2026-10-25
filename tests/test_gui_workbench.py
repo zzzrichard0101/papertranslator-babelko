@@ -1,5 +1,6 @@
 import json
 import os
+import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -110,7 +111,7 @@ def test_workbench_displays_actual_page_and_review_progress(monkeypatch,tmp_path
         app.processEvents()
 
 
-def test_particle_atlas_navigation_uses_local_pdf_blocks(monkeypatch,tmp_path):
+def test_particle_atlas_navigation_builds_word_space_and_keeps_local_blocks(monkeypatch,tmp_path):
     import pymupdf
     from babelko.storage import save
 
@@ -128,6 +129,13 @@ def test_particle_atlas_navigation_uses_local_pdf_blocks(monkeypatch,tmp_path):
         assert navigation is not None
         assert QMetaObject.invokeMethod(navigation,"clicked")
         assert window._window.property("page")==3
+        deadline=time.monotonic()+8
+        while window.wordSpace["status"]=="loading" and time.monotonic()<deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        assert window.wordSpace["status"]=="ready"
+        assert "paragraph" in {point["word"] for point in window.wordSpace["points"]}
+        window.selectAtlasPage(0)
         assert window.atlas["total_pages"]==2
         assert window.atlas["regions"][0]["status"]=="unprocessed"
         window.selectAtlasPage(1)
@@ -157,6 +165,21 @@ def test_particle_atlas_navigation_uses_local_pdf_blocks(monkeypatch,tmp_path):
         assert window.atlas["translated_available"] is True
         window.selectAtlasPage(1)
         assert window.atlas["translated_available"] is False
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_atlas_keeps_flat_view_available_without_3d_module(monkeypatch,tmp_path):
+    monkeypatch.setenv("BABELKO_HOME",str(tmp_path))
+    monkeypatch.setattr("babelko.gui.SPACE_AVAILABLE",False)
+    app=QApplication.instance() or QApplication([])
+    window=Window()
+    try:
+        assert window.supportsSpace is False
+        navigation=window._window.findChild(QObject,"atlasNavigation")
+        assert QMetaObject.invokeMethod(navigation,"clicked")
+        assert window._window.property("page")==3
     finally:
         window.close()
         app.processEvents()

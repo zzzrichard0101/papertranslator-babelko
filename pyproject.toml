@@ -12,6 +12,8 @@ dependencies = [
   "requests>=2.32,<3",
   "bitstring==4.3.1",
   "rapidocr-onnxruntime==1.4.4",
+  "pyside6-addons==6.10.3",
+  "networkx>=3.4,<4",
 ]
 
 [dependency-groups]
