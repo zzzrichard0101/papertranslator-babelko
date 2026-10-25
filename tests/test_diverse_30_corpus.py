@@ -71,11 +71,13 @@ def test_schedule_only_stops_after_every_case_is_terminal():
     assert corpus.finished(dict(total=30, rows=rows + [dict(status='partial', attempts=1)]))
 
 
-def test_repeated_incomplete_documents_hold_batch(tmp_path):
+def test_qa_partial_is_recorded_without_stopping_benchmark(tmp_path):
     recent=[('first','partial'),('second','failed')]
     assert not corpus.hold_after_repeated_failures(tmp_path,recent)
     assert not corpus.hold_after_repeated_failures(tmp_path,recent+[('third','completed')])
-    assert corpus.hold_after_repeated_failures(tmp_path,recent+[('third','partial')])
+    assert not corpus.hold_after_repeated_failures(tmp_path,recent+[('third','partial')])
+    assert not (tmp_path/'batch-hold.json').exists()
+    assert corpus.hold_after_repeated_failures(tmp_path,[('first','failed'),('second','failed'),('third','failed')])
     hold=json.loads((tmp_path/'batch-hold.json').read_text(encoding='utf-8'))
     assert len(hold['recent'])==3
 

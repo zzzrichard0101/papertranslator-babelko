@@ -295,10 +295,10 @@ def stop_completed_schedule(base, report):
 
 
 def hold_after_repeated_failures(base, recent):
-    """Avoid burning hours on a newly broken pipeline across many PDFs."""
-    if len(recent) < 3 or any(status == 'completed' for _, status in recent[-3:]):
+    """Stop only repeated worker failures; QA partials are benchmark evidence."""
+    if len(recent) < 3 or any(status != 'failed' for _, status in recent[-3:]):
         return False
-    save(base / 'batch-hold.json', dict(reason='three consecutive documents did not pass QA',
+    save(base / 'batch-hold.json', dict(reason='three consecutive worker failures',
                                        recent=recent[-3:], created_at=dt.datetime.now(dt.timezone.utc).isoformat()))
     if base.resolve() == DEFAULT_BASE.resolve():
         subprocess.run(['powershell', '-NoProfile', '-Command',
