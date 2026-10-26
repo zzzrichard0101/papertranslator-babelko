@@ -1,4 +1,4 @@
-from babelko.provenance import build, export
+from babelko.provenance import REVISION, build, export
 from babelko.storage import digest, read, save
 
 
@@ -36,3 +36,49 @@ def test_unmatched_tracker_unit_remains_explicit(tmp_path):
     result = build(source, tracker, [0], dict(missing=[]))
     assert result['unlinked_units'] == 1
     assert result['rows'][0]['match'] == 'unlinked'
+
+
+def test_short_unique_page_fragment_and_cross_boundary_exact_link(tmp_path):
+    source = tmp_path / 'SourceEvidence.json'
+    tracker = tmp_path / 'translate_tracking.json'
+    save(source, dict(rows=[
+        dict(id='table-label', extractor='il_paragraph', source_page=1,
+             text='Body Segment Measurements'),
+        dict(id='cross-note', extractor='il_paragraph', source_page=2,
+             text='Furthermore:')]))
+    save(tracker, dict(page=[dict(paragraph=[
+        dict(pdf_unicode='Body Segment', input='Body Segment', output='신체 부위')]),
+        dict(paragraph=[])], cross_page=[dict(pdf_unicode='Furthermore:',
+                                              input='Furthermore:', output='또한:')],
+        cross_column=[]))
+    result = build(source, tracker, [0, 1], dict(missing=[]))
+    assert result['unlinked_units'] == 0
+    assert [row['match'] for row in result['rows']] == [
+        'unique_page_fragment', 'unique_document_exact']
+    assert [row['source_region_ids'] for row in result['rows']] == [
+        ['table-label'], ['cross-note']]
+
+
+def test_unlinked_prose_blocks_current_completion_but_initials_do_not(tmp_path):
+    from babelko.pipeline import check_revision_currency
+    from babelko.source_coverage import REVISION as COVERAGE_REVISION
+
+    source = tmp_path / 'SourceEvidence.json'
+    tracker = tmp_path / 'translate_tracking.json'
+    save(source, dict(rows=[dict(id='one', extractor='il_paragraph',
+                                 source_page=1, text='A source sentence.')]))
+    save(tracker, dict(page=[dict(paragraph=[
+        dict(pdf_unicode='Missing prose claim', input='Missing prose claim', output='누락'),
+        dict(pdf_unicode='S. F.', input='S. F.', output='S. F.')])],
+        cross_page=[], cross_column=[]))
+    report = build(source, tracker, [0], dict(missing=[]))
+    assert report['unlinked_units'] == 2
+    assert report['unlinked_prose_units'] == 1
+    assert report['unlinked_prose'][0]['excerpt'] == 'Missing prose claim'
+    quality = dict(source_coverage=dict(revision=COVERAGE_REVISION),
+                   source_prose_gate=dict(revision=COVERAGE_REVISION, status='passed'),
+                   provenance=dict(revision=REVISION, status='available',
+                                   unlinked_prose_units=1))
+    assert not check_revision_currency(dict(mode='qwen'), quality)['provenance']
+    quality['provenance']['unlinked_prose_units'] = 0
+    assert check_revision_currency(dict(mode='qwen'), quality)['provenance']

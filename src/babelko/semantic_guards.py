@@ -5,7 +5,7 @@ unit is returned to the local editor with its complete source and context.
 """
 import re
 
-REVISION='technical-contradictions-7'
+REVISION='technical-contradictions-8'
 STYLE=re.compile(r"<style\s+id=['\"]\d+['\"]>|</style>")
 OPEN_STYLE=re.compile(r"<style\s+id=['\"]\d+['\"]>")
 TOKEN=re.compile(r'\{v\d+\}')
@@ -25,6 +25,8 @@ def errors(source,target):
     source=STYLE.sub('',source)
     target=STYLE.sub('',target)
     found=nesting
+    from .arithmetic_roles import errors as arithmetic_errors
+    found.extend(arithmetic_errors(source,target))
     if (re.search(r'\btimes? between\b',source,re.I)
             and re.search(r'횟수|(?:\d|\{v\d+\})\s*회(?:의|를|가|는|에)?',target)):
         found.append('시간 간격 오역: times between 두 사건은 발생 횟수가 아니라 그 사이에 걸리는 시간입니다.')

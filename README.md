@@ -81,7 +81,7 @@ New-Item -ItemType Directory -Force results | Out-Null
 
 `Quality.json`의 `source_coverage`는 원문 PDF 텍스트층 및 이미 실행된 보조 OCR의 글을 번역 직전 문단과 대조합니다. `SourceEvidence.json`은 각 행·문단의 안정적인 ID와 연결 근거를 보관하고, `Quality.json`은 그 파일의 해시를 기록합니다. 검사기가 본문 행 누락을 발견하거나 검사 자체가 실패하면 `source_prose_gate`가 완료 판정을 막습니다. 독립 OCR도 같은 위치의 누락을 가리키면 별도로 표시합니다. DOI처럼 독립적으로 보존되는 식별자는 최종 한국어 PDF에 남았는지 검사합니다. 원문 증거가 없는 쪽은 `unchecked_pages`로 남으므로, 통과했다고 해서 스캔 이미지나 그림 내부 글자까지 모두 인식했다는 뜻은 아닙니다.
 
-`Provenance.json`은 추적된 번역 단위를 원문 문단 ID와 출력 쪽에 연결합니다. `rendered_prose_missing` 문제가 생기면 `Quality.json`의 문제 항목에도 연결된 원문 ID와 쪽을 적어, 어느 부분부터 복구할지 찾을 수 있게 합니다. 구두점·수식 기호처럼 글자가 아닌 단위와 아직 연결하지 못한 단위는 구분해서 집계합니다.
+`Provenance.json`은 추적된 번역 단위를 원문 문단 ID와 출력 쪽에 연결합니다. `rendered_prose_missing` 문제가 생기면 `Quality.json`의 문제 항목에도 연결된 원문 ID와 쪽을 적어, 어느 부분부터 복구할지 찾을 수 있게 합니다. 구두점·수식 기호처럼 글자가 아닌 단위와 아직 연결하지 못한 단위는 구분해서 집계합니다. 실질적인 문장이 원문 문단에 연결되지 않으면 `source_provenance_unlinked`로 완료 판정을 막습니다. 결합 모드에서는 여러 산술 연산이 이어진 원문의 각 연산을 따로 대조하고, 연산 단계가 빠지면 해당 문장만 다시 번역합니다.
 
 검수가 끝나기 전에 일부 쪽을 확인하려면 `scripts/export_preview.py --job "작업폴더" --pages "17,100"`을 사용할 수 있습니다. 이 확인본은 저장된 번역 후보만 사용하고 모델을 새로 호출하지 않으며, 정식 완료본으로 취급하지 않습니다.
 

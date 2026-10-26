@@ -60,6 +60,7 @@ def check_revision_currency(state, quality):
     from .figure_legends import REVISION as FIGURE_REVISION
     from .references import REVISION as REFERENCE_REVISION
     from .source_coverage import REVISION as SOURCE_COVERAGE_REVISION
+    from .provenance import REVISION as PROVENANCE_REVISION
 
     figures = quality.get('figures') or {}
     result = dict(
@@ -71,6 +72,10 @@ def check_revision_currency(state, quality):
                          ((quality.get('source_coverage') or {}).get('revision') == SOURCE_COVERAGE_REVISION
                           and (quality.get('source_prose_gate') or {}).get('revision') == SOURCE_COVERAGE_REVISION
                           and (quality.get('source_prose_gate') or {}).get('status') == 'passed')),
+        provenance=('source_coverage' not in quality or
+                    ((quality.get('provenance') or {}).get('revision') == PROVENANCE_REVISION
+                     and (quality.get('provenance') or {}).get('status') == 'available'
+                     and (quality.get('provenance') or {}).get('unlinked_prose_units') == 0)),
     )
     hybrid = state.get('mode') == 'hybrid'
     if hybrid:
@@ -201,12 +206,13 @@ def revalidate_saved_output(folder,state,progress):
     revisions=check_revision_currency(state,quality)
     if not revisions['quantity'] or not revisions['source_coverage']:return False
     stale_render=state.get('status')=='completed' and not revisions['rendered']
+    stale_provenance=state.get('status')=='completed' and not revisions['provenance']
     expected_index=scanned_index_pages(state,quality.get('references',{}))
     stale_index=(state.get('status')=='completed' and
         quality.get('restored_original_index_pages',[])!=expected_index)
     from .figure_legends import image_manifest_valid
     stale_images=not image_manifest_valid(out,quality.get('figures',{}),state['output_hashes'])
-    refresh_completed=state.get('status')=='completed' and (stale_render or stale_index or stale_images)
+    refresh_completed=state.get('status')=='completed' and (stale_render or stale_provenance or stale_index or stale_images)
     if state.get('status')=='completed' and not refresh_completed:return False
     if refresh_completed:
         required=('references','meaning','guards','regions','context','scan','scan_layout')
@@ -272,6 +278,9 @@ def revalidate_saved_output(folder,state,progress):
         checks['issues'].append(dict(code='source_prose_missing',detail=source_gate))
     if (quality.get('source_coverage') or {}).get('evidence_ledger') and provenance['status']!='available':
         checks['issues'].append(dict(code='source_provenance_unavailable',detail=provenance))
+    if provenance.get('unlinked_prose_units',0):
+        checks['issues'].append(dict(code='source_provenance_unlinked',
+                                    count=provenance['unlinked_prose_units']))
     checks['status']='failed' if checks['issues'] else 'passed'
     quality.update(checks=checks,translation_tracking=tracked,quantity_relations=quantity_relations,
                    rendered_prose=rendered,source_identifier_output=identifier_output,
@@ -564,6 +573,9 @@ def run(folder):
                                          config.working_dir/'translate_tracking.json',state['selected'],rendered)
             if evidence_meta and provenance['status']!='available':
                 checks['status']='failed';checks['issues'].append(dict(code='source_provenance_unavailable'))
+            if provenance.get('unlinked_prose_units',0):
+                checks['status']='failed';checks['issues'].append(dict(code='source_provenance_unlinked',
+                    count=provenance['unlinked_prose_units']))
             report['provenance']=provenance
             from .quantity_relations import REVISION as QUANTITY_RELATIONS_REVISION
             report['quantity_relations_revision']=QUANTITY_RELATIONS_REVISION
