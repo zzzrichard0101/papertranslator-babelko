@@ -127,6 +127,8 @@ def main(mode='qwen',experimental=False,diverse=False,source_override=None,pages
             assert quality['source_coverage']['status']=='diagnostic'
             assert quality['source_coverage']['inspected_pages']==(6 if diverse else 3)
             assert quality['source_coverage']['candidate_lines']>0
+            assert quality['source_prose_gate']['status']=='passed'
+            assert quality['source_identifier_output']['status']=='passed'
             evidence=out/'SourceEvidence.json'
             evidence_meta=quality['source_coverage']['evidence_ledger']
             assert evidence.is_file() and evidence_meta['status']=='available'
@@ -135,6 +137,8 @@ def main(mode='qwen',experimental=False,diverse=False,source_override=None,pages
             assert evidence_meta['rows']==len(evidence_rows)
             assert {'native','il_paragraph'} <= {row['extractor'] for row in evidence_rows}
             assert len({row['id'] for row in evidence_rows})==len(evidence_rows)
+            assert quality['provenance']['status']=='available'
+            assert digest(out/'Provenance.json')==quality['provenance']['sha256']
             if experimental:
                 assert quality['region_coverage']['status']=='passed' and quality['region_coverage']['checked_regions']>10
                 assert 'EBP' in quality['document_context']['entries']

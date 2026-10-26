@@ -59,6 +59,7 @@ def check_revision_currency(state, quality):
     from .render_coverage import REVISION as RENDER_REVISION
     from .figure_legends import REVISION as FIGURE_REVISION
     from .references import REVISION as REFERENCE_REVISION
+    from .source_coverage import REVISION as SOURCE_COVERAGE_REVISION
 
     figures = quality.get('figures') or {}
     result = dict(
@@ -66,6 +67,10 @@ def check_revision_currency(state, quality):
         rendered=(quality.get('rendered_prose') or {}).get('revision') == RENDER_REVISION,
         figures=figures.get('revision') == FIGURE_REVISION and figures.get('status') == 'passed',
         references=(quality.get('references') or {}).get('revision') == REFERENCE_REVISION,
+        source_coverage=('source_coverage' not in quality or
+                         ((quality.get('source_coverage') or {}).get('revision') == SOURCE_COVERAGE_REVISION
+                          and (quality.get('source_prose_gate') or {}).get('revision') == SOURCE_COVERAGE_REVISION
+                          and (quality.get('source_prose_gate') or {}).get('status') == 'passed')),
     )
     hybrid = state.get('mode') == 'hybrid'
     if hybrid:
@@ -194,7 +199,7 @@ def revalidate_saved_output(folder,state,progress):
     from .source_coverage import evidence_export_valid
     if not evidence_export_valid(out,quality.get('source_coverage')):return False
     revisions=check_revision_currency(state,quality)
-    if not revisions['quantity']:return False
+    if not revisions['quantity'] or not revisions['source_coverage']:return False
     stale_render=state.get('status')=='completed' and not revisions['rendered']
     expected_index=scanned_index_pages(state,quality.get('references',{}))
     stale_index=(state.get('status')=='completed' and
@@ -217,6 +222,7 @@ def revalidate_saved_output(folder,state,progress):
             or (state.get('mode')=='hybrid' and quality.get('meaning_assurance',{}).get('status')!='passed')):return False
     if state.get('snapshot',{}).get('experimental_pipeline') and not (folder/'region-ledger.json').is_file():return False
     from .validation import inspect_output,tracking_status,quantity_relation_status
+    from .source_coverage import identifier_output_status,source_prose_gate
     from .render_coverage import inspect as inspect_rendered
     tracker=folder/'intermediate'/'translate_tracking.json'
     if not tracker.is_file():return False
@@ -244,6 +250,10 @@ def revalidate_saved_output(folder,state,progress):
     ledger_path=folder/'region-ledger.json'
     rendered=inspect_rendered(out/'Korean.pdf',tracker,extracted,folder/'Original.pdf',
         ledger_path if ledger_path.is_file() else None,state['selected'])
+    identifier_output=identifier_output_status(quality.get('source_coverage'),state['selected'],extracted)
+    source_gate=source_prose_gate(quality['source_coverage']) if 'source_coverage' in quality else None
+    from .provenance import export as export_provenance
+    provenance=export_provenance(out,out/'SourceEvidence.json',tracker,state['selected'],rendered)
     regions=None
     if state.get('snapshot',{}).get('experimental_pipeline'):
         from .region_ledger import RegionLedger,REVISION as REGION_REVISION
@@ -256,11 +266,22 @@ def revalidate_saved_output(folder,state,progress):
         if regions['status']!='passed':checks['issues'].append(dict(code='spatial_region_missing',detail=regions))
     if rendered['status']!='passed':checks['issues'].append(dict(code='rendered_prose_missing',detail=rendered))
     if tracked['status']!='passed':checks['issues'].append(dict(code='tracked_translation_missing',detail=tracked))
+    if identifier_output['status']!='passed':
+        checks['issues'].append(dict(code='source_identifier_missing',detail=identifier_output))
+    if source_gate and source_gate['status']!='passed':
+        checks['issues'].append(dict(code='source_prose_missing',detail=source_gate))
+    if (quality.get('source_coverage') or {}).get('evidence_ledger') and provenance['status']!='available':
+        checks['issues'].append(dict(code='source_provenance_unavailable',detail=provenance))
     checks['status']='failed' if checks['issues'] else 'passed'
-    quality.update(checks=checks,translation_tracking=tracked,quantity_relations=quantity_relations,rendered_prose=rendered)
+    quality.update(checks=checks,translation_tracking=tracked,quantity_relations=quantity_relations,
+                   rendered_prose=rendered,source_identifier_output=identifier_output,
+                   provenance=provenance)
+    if source_gate is not None:quality['source_prose_gate']=source_gate
     if regions is not None:quality['region_coverage']=regions
     save(out/'Quality.json',quality);save(folder/'quality.json',quality)
     state['output_hashes']['Quality.json']=digest(out/'Quality.json')
+    if (out/'Provenance.json').is_file():
+        state['output_hashes']['Provenance.json']=digest(out/'Provenance.json')
     state['status']='completed' if checks['status']=='passed' else 'partial'
     if state['status']=='completed':state.pop('error',None)
     else:state['error']=f"PDF는 생성했지만 검증 문제 {len(checks['issues'])}건이 남았습니다. Quality.json에서 위치와 원인을 확인하세요."
@@ -477,6 +498,7 @@ def run(folder):
             with performance.measure('export.bilingual'):compose(folder/'Original.pdf',out/'Korean.pdf',out/'Bilingual.pdf',state['selected'])
             from .validation import inspect_output,tracking_status,quantity_relation_status
             from .render_coverage import inspect as inspect_rendered
+            from .source_coverage import identifier_output_status,source_prose_gate
             with performance.measure('validation.pdf'):
                 extracted_pages=[];checks=inspect_output(out/'Korean.pdf',state['selected'],extracted_pages,folder/'Original.pdf')
                 tracked=tracking_status(config.working_dir/'translate_tracking.json')
@@ -486,12 +508,19 @@ def run(folder):
                     folder/'Original.pdf',ledger_path if ledger_path.is_file() else None,state['selected'])
                 regions=translator.region_ledger.inspect(out/'Korean.pdf',state['selected'],folder/'Original.pdf',
                     restored_index_pages) if translator.experimental_pipeline else None
+            source_coverage=read(folder/'source-coverage.json') if (folder/'source-coverage.json').is_file() else dict(status='unavailable')
+            identifier_output=identifier_output_status(source_coverage,state['selected'],extracted_pages)
+            source_gate=source_prose_gate(source_coverage)
             if regions and regions['status']!='passed':
                 checks['status']='failed';checks['issues'].append(dict(code='spatial_region_missing',detail=regions))
             if rendered['status']!='passed':
                 checks['status']='failed';checks['issues'].append(dict(code='rendered_prose_missing',detail=rendered))
             if tracked['status']!='passed':
                 checks['status']='failed';checks['issues'].append(dict(code='tracked_translation_missing',detail=tracked))
+            if identifier_output['status']!='passed':
+                checks['status']='failed';checks['issues'].append(dict(code='source_identifier_missing',detail=identifier_output))
+            if source_gate['status']!='passed':
+                checks['status']='failed';checks['issues'].append(dict(code='source_prose_missing',detail=source_gate))
             if quantity_relations['status']!='passed':
                 checks['status']='failed';checks['issues'].append(dict(code='quantity_relation_mismatch',detail=quantity_relations))
             if translator.hard_failures:
@@ -516,7 +545,9 @@ def run(folder):
             report['performance']=performance.snapshot()
             report['layout_cache']=read(folder/'layout-cache-report.json') if (folder/'layout-cache-report.json').is_file() else {}
             report['references']=reference_report
-            report['source_coverage']=read(folder/'source-coverage.json') if (folder/'source-coverage.json').is_file() else dict(status='unavailable')
+            report['source_coverage']=source_coverage
+            report['source_identifier_output']=identifier_output
+            report['source_prose_gate']=source_gate
             evidence_meta=report['source_coverage'].get('evidence_ledger') or {}
             evidence_path=folder/'source-evidence.json'
             if (evidence_meta.get('sha256') and evidence_path.is_file()
@@ -528,6 +559,12 @@ def run(folder):
             from .source_coverage import evidence_export_valid
             if not evidence_export_valid(out,report['source_coverage']):
                 checks['status']='failed';checks['issues'].append(dict(code='source_evidence_missing'))
+            from .provenance import export as export_provenance
+            provenance=export_provenance(out,out/'SourceEvidence.json',
+                                         config.working_dir/'translate_tracking.json',state['selected'],rendered)
+            if evidence_meta and provenance['status']!='available':
+                checks['status']='failed';checks['issues'].append(dict(code='source_provenance_unavailable'))
+            report['provenance']=provenance
             from .quantity_relations import REVISION as QUANTITY_RELATIONS_REVISION
             report['quantity_relations_revision']=QUANTITY_RELATIONS_REVISION
             report['restored_original_index_pages']=restored_index_pages
@@ -554,6 +591,8 @@ def run(folder):
             state['output_hashes']={name:digest(out/name) for name in ['Original.pdf','Korean.pdf','Bilingual.pdf','Quality.json','FigureLegends.html','FigureLegends.json']}
             if (out/'SourceEvidence.json').is_file():
                 state['output_hashes']['SourceEvidence.json']=digest(out/'SourceEvidence.json')
+            if (out/'Provenance.json').is_file():
+                state['output_hashes']['Provenance.json']=digest(out/'Provenance.json')
             state['output_hashes'].update(figure_report['image_hashes'])
             state.update(output=str(out),status='completed' if checks['status']=='passed' else 'partial')
             if checks['status']=='passed':state.pop('error',None)

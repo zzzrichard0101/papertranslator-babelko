@@ -72,13 +72,16 @@ New-Item -ItemType Directory -Force results | Out-Null
 | `Bilingual.pdf` | 왼쪽 원문, 오른쪽 한국어의 쪽별 대조본 |
 | `Quality.json` | 자동 검사 결과, 처리 범위, 미해결 문제와 처리 기록 |
 | `SourceEvidence.json` | 원문 텍스트층·보조 OCR 행과 번역 직전 문단의 ID·위치·연결 근거. 원문 분석이 가능할 때 생성 |
+| `Provenance.json` | 원문 문단 ID와 번역 추적 단위·출력 쪽 연결. 연결이 불확실한 단위도 따로 기록 |
 | `FigureLegends.html` | 인식된 그림과 그 아래에 배치한 한국어 범례 |
 | `FigureLegends.json` | 그림 범례의 처리·실패 기록. 그림이 없어도 생성 |
 | `FigureImages/` | 범례 HTML에 표시되는 원본 그림 PNG. 생성된 각 파일의 해시를 검사하며 손상 시 원본 PDF에서 다시 만듦 |
 
 품질 검사를 통과하지 못한 경우에도 읽어 볼 PDF가 만들어질 수 있습니다. 앱이 **부분 완료(`partial`)**로 표시하면 `Quality.json`에서 문제를 확인하세요. `partial`은 번역 완료나 의미 정확성 인증이 아닙니다. 취소하거나 실패한 작업은 앱의 **이 작업 다시 시작**으로 저장된 번역을 재사용할 수 있지만, 분석과 조판 일부는 다시 실행될 수 있습니다.
 
-`Quality.json`의 `source_coverage`는 원문 PDF 텍스트층 및 이미 실행된 보조 OCR의 글을 번역 직전 문단과 대조한 **진단 기록**입니다. `SourceEvidence.json`은 각 행·문단의 안정적인 ID와 연결 근거를 보관하고, `Quality.json`은 그 파일의 해시를 기록합니다. `suspected_missing_lines`와 `pixel_suspected_missing_rows`는 조사할 위치를 알려 주며, `corroborated_suspected_missing_lines`는 두 추출기가 같은 위치에서 함께 의심한 행의 수입니다. 현재는 오탐 검증 중이므로 완료 판정을 자동으로 바꾸지 않습니다. 0이라고 해서 스캔 이미지의 글자나 그림 내부 글자까지 모두 인식했다는 뜻은 아닙니다.
+`Quality.json`의 `source_coverage`는 원문 PDF 텍스트층 및 이미 실행된 보조 OCR의 글을 번역 직전 문단과 대조합니다. `SourceEvidence.json`은 각 행·문단의 안정적인 ID와 연결 근거를 보관하고, `Quality.json`은 그 파일의 해시를 기록합니다. 검사기가 본문 행 누락을 발견하거나 검사 자체가 실패하면 `source_prose_gate`가 완료 판정을 막습니다. 독립 OCR도 같은 위치의 누락을 가리키면 별도로 표시합니다. DOI처럼 독립적으로 보존되는 식별자는 최종 한국어 PDF에 남았는지 검사합니다. 원문 증거가 없는 쪽은 `unchecked_pages`로 남으므로, 통과했다고 해서 스캔 이미지나 그림 내부 글자까지 모두 인식했다는 뜻은 아닙니다.
+
+`Provenance.json`은 추적된 번역 단위를 원문 문단 ID와 출력 쪽에 연결합니다. `rendered_prose_missing` 문제가 생기면 `Quality.json`의 문제 항목에도 연결된 원문 ID와 쪽을 적어, 어느 부분부터 복구할지 찾을 수 있게 합니다. 구두점·수식 기호처럼 글자가 아닌 단위와 아직 연결하지 못한 단위는 구분해서 집계합니다.
 
 검수가 끝나기 전에 일부 쪽을 확인하려면 `scripts/export_preview.py --job "작업폴더" --pages "17,100"`을 사용할 수 있습니다. 이 확인본은 저장된 번역 후보만 사용하고 모델을 새로 호출하지 않으며, 정식 완료본으로 취급하지 않습니다.
 
