@@ -191,6 +191,8 @@ def revalidate_saved_output(folder,state,progress):
     if any(not (out/name).is_file() or digest(out/name)!=state['output_hashes'].get(name) for name in names):return False
     if digest(folder/'Original.pdf')!=state.get('source_sha256'):return False
     quality=read(out/'Quality.json')
+    from .source_coverage import evidence_export_valid
+    if not evidence_export_valid(out,quality.get('source_coverage')):return False
     revisions=check_revision_currency(state,quality)
     if not revisions['quantity']:return False
     stale_render=state.get('status')=='completed' and not revisions['rendered']
@@ -515,6 +517,17 @@ def run(folder):
             report['layout_cache']=read(folder/'layout-cache-report.json') if (folder/'layout-cache-report.json').is_file() else {}
             report['references']=reference_report
             report['source_coverage']=read(folder/'source-coverage.json') if (folder/'source-coverage.json').is_file() else dict(status='unavailable')
+            evidence_meta=report['source_coverage'].get('evidence_ledger') or {}
+            evidence_path=folder/'source-evidence.json'
+            if (evidence_meta.get('sha256') and evidence_path.is_file()
+                and digest(evidence_path)==evidence_meta['sha256']):
+                shutil.copyfile(evidence_path,out/'SourceEvidence.json')
+                evidence_meta['status']='available'
+            elif evidence_meta:
+                evidence_meta['status']='unavailable'
+            from .source_coverage import evidence_export_valid
+            if not evidence_export_valid(out,report['source_coverage']):
+                checks['status']='failed';checks['issues'].append(dict(code='source_evidence_missing'))
             from .quantity_relations import REVISION as QUANTITY_RELATIONS_REVISION
             report['quantity_relations_revision']=QUANTITY_RELATIONS_REVISION
             report['restored_original_index_pages']=restored_index_pages
@@ -539,6 +552,8 @@ def run(folder):
                     status='passed' if not translator.hard_failures else 'failed')
             save(out/'Quality.json',report);save(folder/'quality.json',report)
             state['output_hashes']={name:digest(out/name) for name in ['Original.pdf','Korean.pdf','Bilingual.pdf','Quality.json','FigureLegends.html','FigureLegends.json']}
+            if (out/'SourceEvidence.json').is_file():
+                state['output_hashes']['SourceEvidence.json']=digest(out/'SourceEvidence.json')
             state['output_hashes'].update(figure_report['image_hashes'])
             state.update(output=str(out),status='completed' if checks['status']=='passed' else 'partial')
             if checks['status']=='passed':state.pop('error',None)

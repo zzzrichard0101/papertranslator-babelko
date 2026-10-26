@@ -3,7 +3,8 @@ from types import SimpleNamespace as Obj
 import pymupdf
 import pytest
 
-from babelko.source_coverage import inspect, source_lines
+from babelko.source_coverage import evidence_export_valid, inspect, source_lines
+from babelko.storage import digest
 
 
 FIRST = 'Independent source extraction detects missing research paragraphs today.'
@@ -28,6 +29,11 @@ def test_native_source_line_missing_from_il_is_reported_without_changing_input(t
     assert report['candidate_lines'] == 2
     assert report['suspected_missing_lines'] == 1
     assert report['pages'][0]['suspected_missing'][0]['excerpt'] == SECOND
+    assert report['pages'][0]['suspected_missing'][0]['line_id'] in {
+        row['id'] for row in report['evidence_rows'] if row.get('resolution') == 'suspected_missing'}
+    assert len([row for row in report['evidence_rows'] if row['extractor'] == 'il_paragraph']) == 1
+    assert len([row for row in report['evidence_rows'] if row['extractor'] == 'native']) == 2
+    assert report['evidence_rows'] == inspect(pdf, docs)['evidence_rows']
     assert docs.page[0].pdf_paragraph[0].unicode == FIRST
 
 
@@ -77,3 +83,45 @@ def test_independent_scan_evidence_is_compared_without_running_new_ocr(tmp_path)
     assert report['pixel_candidate_rows'] == 1
     assert report['pixel_suspected_missing_rows'] == 1
     assert report['pages'][0]['pixel_suspected_missing'][0]['excerpt'] == SECOND
+    assert report['corroborated_suspected_missing_lines'] == 1
+    missing = report['pages'][0]['suspected_missing'][0]['line_id']
+    ledger = {row['id']: row for row in report['evidence_rows']}
+    assert ledger[missing]['corroborated_by']
+    assert ledger[missing]['il_paragraph_ids'] == []
+
+
+def test_same_ocr_words_in_another_location_do_not_corroborate_omission(tmp_path):
+    pdf = tmp_path / 'input.pdf'
+    docs = document(pdf, FIRST)
+    rows = {0: [dict(text=SECOND, bbox=[45, 300, 520, 320], score=.99)]}
+    report = inspect(pdf, docs, pixel_rows=rows)
+    assert report['suspected_missing_lines'] == 1
+    assert report['pixel_suspected_missing_rows'] == 1
+    assert report['corroborated_suspected_missing_lines'] == 0
+
+
+def test_empty_page_does_not_link_evidence_from_previous_page(tmp_path):
+    pdf = tmp_path / 'input.pdf'
+    with pymupdf.open() as source:
+        first = source.new_page(width=600, height=800)
+        first.insert_text((45, 90), FIRST, fontsize=11)
+        source.new_page(width=600, height=800)
+        source.save(pdf)
+    docs = Obj(page=[Obj(page_number=0, pdf_paragraph=[Obj(unicode=FIRST)]),
+                     Obj(page_number=1, pdf_paragraph=[])])
+    report = inspect(pdf, docs)
+    assert report['pages'][1]['source_page'] == 2
+    assert report['pages'][1]['suspected_missing'] == []
+    assert [row['source_page'] for row in report['evidence_rows']] == [1, 1]
+
+
+def test_declared_evidence_requires_an_intact_export(tmp_path):
+    coverage = dict(evidence_ledger=dict(status='available', sha256='missing'))
+    assert not evidence_export_valid(tmp_path, coverage)
+    path = tmp_path / 'SourceEvidence.json'
+    path.write_text('{"rows":[]}', encoding='utf-8')
+    coverage['evidence_ledger']['sha256'] = digest(path)
+    assert evidence_export_valid(tmp_path, coverage)
+    path.write_text('{"rows":[1]}', encoding='utf-8')
+    assert not evidence_export_valid(tmp_path, coverage)
+    assert evidence_export_valid(tmp_path, {})  # Older reports never declared this artifact.
