@@ -102,6 +102,25 @@ def test_clipped_fused_arxiv_column_preserved_after_pdf_placeholder_extraction()
     assert [p for _,p,_ in select(document([heading,first],[fused,body]))]==[heading,first,fused,body]
 
 
+def test_bracketed_reference_column_and_single_final_entry_continue_across_pages():
+    heading=paragraph('References','title')
+    first=paragraph('[1] Smith, J.: Initial results. Journal of Materials 12, 1452 (2020) https://doi.org/10.1234/a')
+    fused=paragraph('under cycling fields. Applied Physics Letters 91(2), 022907 (2007). '
+        '[12] Lebeugle, D., Colson, D.: Electric polarization. Nature 432, 737 (2004). '
+        '[13] Stachiotti, M.G., Sepliarsky, M.: Toroidal ferroelectricity. '
+        'Phys. Rev. Lett. 106, 137601 (2011).')
+    clipped=paragraph('dynamics simulation. J. Phys.: Condens Matter 16, 3495 (2004)','abandon')
+    final=paragraph('[14] Todorov, I.T., Smith, W.: New simulations. '
+        'J. Mater. Chem. 16, 1911 (2006)')
+    page_number=paragraph('11','abandon')
+    appendix=paragraph('Appendix A','title')
+    body=paragraph('We compare results from 2004 and 2011.')
+    assert entry(fused.unicode) and entry(final.unicode)
+    assert not entry('We cite [12] and [13] from 2004 and 2011 in the introduction.')
+    chosen=[p for _,p,_ in select(document([heading,first],[fused],[clipped,final,page_number,appendix,body]))]
+    assert chosen==[heading,first,fused,clipped,final]
+
+
 def test_fused_appendix_contents_are_preserved_without_hiding_appendix_body():
     heading=paragraph('Appendix','title')
     top=paragraph('A The proof of orthogonality','title')

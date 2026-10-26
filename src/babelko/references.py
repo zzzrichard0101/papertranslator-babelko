@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 from .storage import save
 
-REVISION='bibliography-original-and-contents-10'
+REVISION='bibliography-original-and-contents-12'
 TAGS=re.compile(r'<[^>]+>')
 HEADING=re.compile(r'^(?:(?:\d+(?:\.\d+)*|[A-Z])\.?\s+)?(?:references|bibliography|works cited|literature cited|참고\s*문헌)\s*[:.]?$',re.I)
 AUTHOR_YEAR=re.compile(r"\b[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s+(?:[A-Z]\.\s*){1,3}(?:(?:,?\s*&\s*|,\s*)[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s*(?:[A-Z]\.\s*){1,3})?\s*(?:\(Ed(?:s)?\.\)\.\s*)?\((?:18|19|20)\d{2}[a-z]?\)\.")
@@ -20,6 +20,8 @@ ARXIV_ID=re.compile(r'\babs/\d{4}\.\d{4,5}\b',re.I)
 # Some extractors merge an entire numbered bibliography column into one
 # paragraph, leaving its first citation split across several IL paragraphs.
 FUSED_NUMBERED=re.compile(r'(?:^|[.!?]\s+)\d{1,3}\.\s+[A-Z][A-Za-z’\'\-]+,\s*(?:[A-Z]\.|[A-Z][a-z])')
+BRACKETED_ANCHOR=re.compile(r'\[\d{1,3}\]\s+[A-Z][A-Za-zÀ-ÿ’\'\-]+,\s*[A-Z]\.')
+JOURNAL_PAGES=re.compile(r'\b\d{1,4}\s*,\s*\d{2,6}(?:[-–]\d+)?\s*\((?:18|19|20)\d{2}\)')
 AUTHOR_BIO=re.compile(r'^[A-Z][A-Z .\-]{9,}\s+(?:\([^)]*IEEE\)\s+)?(?:received|obtained|earned|is currently|was born)\b',re.I)
 
 
@@ -45,8 +47,13 @@ def entry(value):
     numbered=list(FUSED_NUMBERED.finditer(value))
     fused_numbered_block=(len(numbered)>=2 and len(re.findall(r'\b(?:18|19|20)\d{2}\b',value))>=2
                           and len(value)/len(numbered)<900 and bool(METADATA.search(value)))
-    return bool(damaged_block or fused_arxiv_block or fused_numbered_block or (matches and matches[0].start()==0 and (len(matches)>1 or METADATA.search(value))) or
-                (NUMBERED.match(value) and re.search(r'\b(?:18|19|20)\d{2}\b',value) and METADATA.search(value)))
+    bracketed=list(BRACKETED_ANCHOR.finditer(value))
+    fused_bracketed_block=(len(bracketed)>=2 and len(re.findall(r'\b(?:18|19|20)\d{2}\b',value))>=2
+                            and len(value)/len(bracketed)<900 and bool(METADATA.search(value) or JOURNAL_PAGES.search(value)))
+    return bool(damaged_block or fused_arxiv_block or fused_numbered_block or fused_bracketed_block or
+                (matches and matches[0].start()==0 and (len(matches)>1 or METADATA.search(value))) or
+                (NUMBERED.match(value) and re.search(r'\b(?:18|19|20)\d{2}\b',value) and
+                 (METADATA.search(value) or JOURNAL_PAGES.search(value))))
 
 
 def select(docs):
@@ -85,7 +92,11 @@ def select(docs):
         # OCR heading was missed. Require fresh entry evidence on that page.
         if active and not any(entry(v) for v in values):active=False
         for i,(p,value) in enumerate(zip(paragraphs,values)):
-            if getattr(p,'layout_label','')=='abandon':continue
+            # A clipped citation at the top of a continuing reference page
+            # can be marked "abandon" by layout analysis even though native
+            # translation still sees it. Keep it original, but not page nums.
+            if getattr(p,'layout_label','')=='abandon' and not (active and value and not value.isdigit()):
+                continue
             heading=bool(HEADING.fullmatch(value))
             # A scanned separator or damaged running title can sit between a
             # bibliography heading and its first real citation. Its text is
