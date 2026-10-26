@@ -99,7 +99,7 @@ def test_clipped_fused_arxiv_column_preserved_after_pdf_placeholder_extraction()
         '{v2}Chung, Hyung Won et al. "Scaling Models." ArXiv abs/2210.11416 (2022): n. pag.')
     body=paragraph('We compare models in 2024 and cite ArXiv abs/2404.09932.')
     assert entry(fused.unicode) and not entry(body.unicode)
-    assert [p for _,p,_ in select(document([heading,first],[fused,body]))]==[heading,first,fused,body]
+    assert [p for _,p,_ in select(document([heading,first],[fused,body]))]==[heading,first,fused]
 
 
 def test_bracketed_reference_column_and_single_final_entry_continue_across_pages():
@@ -175,6 +175,52 @@ def test_numbered_methods_and_result_prose_are_not_bibliography():
         'The study used two steps to reduce bias.')
     assert not entry(methods.unicode)
     assert select(document([methods]))==[]
+
+
+def test_fused_unnumbered_publication_columns_are_preserved():
+    arxiv=(
+        '{v1}Alice Morgan and Bob Lee. "First study." In: arXiv preprint arXiv:2401.01001 (2024).'
+        '{v2}Carol Park and Dana Xu. "Second study." In: arXiv preprint arXiv:2302.01002 (2023).'
+        '{v3}Evan Kim and Frank Li. "Third study." In: arXiv preprint arXiv:2203.01003 (2022).')
+    astronomy=(
+        'Carter, A., & Jones, B. 2016, SoPh, 291, 2629 '
+        'Lee, C., Wang, D., & Park, E. 2023, ApJ, 298, 44 '
+        'Smith, F., & Kim, G. 2014, JGR, 186, 35')
+    materials=(
+        'A. Jones, B. Lee, and C. Park, First result, Phys. Rev. B 110, 144420 (2024). '
+        'D. Kim, E. Xu, and F. Wang, Second result, Phys. Rev. X 12, 031042 (2022). '
+        'G. Bell, H. Chen, and I. Lee, Third result, Phys. Rev. B 106, 224429 (2022).')
+    for value in (arxiv,astronomy,materials):
+        assert entry(value)
+        heading=paragraph('References','title');block=paragraph(value)
+        appendix=paragraph('Appendix','title');body=paragraph('We compare these studies in detail.')
+        assert [p for _,p,_ in select(document([heading,block,appendix,body]))]==[heading,block]
+    assert not entry('We compare arXiv:2401.01001 (2024), arXiv:2302.01002 (2023), '
+                     'and arXiv:2203.01003 (2022) as evidence for the new model.')
+    assert not entry('The 2016, 2023, and 2014 observations were collected by Carter, A. '
+                     'and Jones, B. for an independent analysis of the solar limb.')
+
+
+def test_fused_numbered_full_name_publications_are_preserved():
+    value=('[104] W Scott Terry. Learning and memory: Basic principles, processes, and procedures. '
+           'Routledge, 2017. [105] Matteo Tiezzi, Michele Casoni, and Alessandro Betti. '
+           'A recurrent model for long sequence learning. arXiv:2402.01001 (2024). '
+           '[106] Alice Morgan and Bob Lee. A third study. arXiv:2301.01002 (2023).')
+    assert entry(value)
+    assert [p.unicode for _,p,_ in select(document([paragraph(value)]))]==[value]
+    assert not entry('[104] W Scott Terry proposed a method in 2017. '
+                     '[105] Matteo Tiezzi discussed the method in 2024. '
+                     'We analyze these papers in the next section.')
+
+
+def test_figures_and_publisher_notes_within_reference_region_stay_translatable():
+    heading=paragraph('References','title')
+    first=paragraph(APA)
+    figure=paragraph('Figure A1. Original article reproduced with permission.')
+    second=paragraph('Lee, C. (2023). Solar observations. Journal of Astronomy 22, 41 (2023).')
+    note=paragraph('Publisher’s Note The publisher remains neutral on jurisdictional claims.')
+    chosen=[p for _,p,_ in select(document([heading,first,figure,second,note]))]
+    assert chosen==[heading,first,second]
 
 
 def test_repeated_running_header_is_kept_original_without_exempting_body():

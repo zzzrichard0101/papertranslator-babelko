@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 from .storage import save
 
-REVISION='bibliography-original-and-contents-12'
+REVISION='bibliography-original-and-contents-15'
 TAGS=re.compile(r'<[^>]+>')
 HEADING=re.compile(r'^(?:(?:\d+(?:\.\d+)*|[A-Z])\.?\s+)?(?:references|bibliography|works cited|literature cited|참고\s*문헌)\s*[:.]?$',re.I)
 AUTHOR_YEAR=re.compile(r"\b[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s+(?:[A-Z]\.\s*){1,3}(?:(?:,?\s*&\s*|,\s*)[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s*(?:[A-Z]\.\s*){1,3})?\s*(?:\(Ed(?:s)?\.\)\.\s*)?\((?:18|19|20)\d{2}[a-z]?\)\.")
@@ -21,8 +21,13 @@ ARXIV_ID=re.compile(r'\babs/\d{4}\.\d{4,5}\b',re.I)
 # paragraph, leaving its first citation split across several IL paragraphs.
 FUSED_NUMBERED=re.compile(r'(?:^|[.!?]\s+)\d{1,3}\.\s+[A-Z][A-Za-z’\'\-]+,\s*(?:[A-Z]\.|[A-Z][a-z])')
 BRACKETED_ANCHOR=re.compile(r'\[\d{1,3}\]\s+[A-Z][A-Za-zÀ-ÿ’\'\-]+,\s*[A-Z]\.')
+BRACKETED_FULLNAME=re.compile(r'\[\d{1,3}\]\s+(?:[A-Z]\.?(?:\s+|(?=[A-Z]))){0,2}[A-Z][A-Za-zÀ-ÿ’\'\-]+(?:\s+[A-Z][A-Za-zÀ-ÿ’\'\-]+){1,3}[,.]')
 JOURNAL_PAGES=re.compile(r'\b\d{1,4}\s*,\s*\d{2,6}(?:[-–]\d+)?\s*\((?:18|19|20)\d{2}\)')
+AUTHOR_INITIALS=re.compile(r"\b[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s*(?:[A-Z]\.\s*){1,3}")
+YEAR_JOURNAL=re.compile(r'\b(?:18|19|20)\d{2}[a-z]?,\s*[A-Z][A-Za-z.]{1,12},\s*\d{1,5}\b')
+ARXIV_PREPRINT=re.compile(r'\barxiv\s*(?:preprint\s*)?(?:arxiv\s*)?:\s*\d{4}\.\d{4,5}\b',re.I)
 AUTHOR_BIO=re.compile(r'^[A-Z][A-Z .\-]{9,}\s+(?:\([^)]*IEEE\)\s+)?(?:received|obtained|earned|is currently|was born)\b',re.I)
+NON_REFERENCE=re.compile(r'^(?:fig(?:ure)?\.?\s*[A-Z]?\d+[.:\s]|table\s*[A-Z]?\d+[.:\s]|publisher[’\']s\s+note\b|we\s+(?:compare|show|demonstrate|analyze|analyse|propose|evaluate|discuss)\b)',re.I)
 
 
 def text(paragraph):
@@ -50,7 +55,21 @@ def entry(value):
     bracketed=list(BRACKETED_ANCHOR.finditer(value))
     fused_bracketed_block=(len(bracketed)>=2 and len(re.findall(r'\b(?:18|19|20)\d{2}\b',value))>=2
                             and len(value)/len(bracketed)<900 and bool(METADATA.search(value) or JOURNAL_PAGES.search(value)))
+    fullnames=list(BRACKETED_FULLNAME.finditer(value))
+    fused_fullname_block=(len(fullnames)>=2 and len(re.findall(r'\b(?:18|19|20)\d{2}\b',value))>=2
+                          and len(value)/len(fullnames)<900 and bool(METADATA.search(value) or JOURNAL_PAGES.search(value)))
+    # Camera-ready PDFs can fuse an entire unnumbered bibliography column.
+    # Demand repeated publication records and dense citation structure; years
+    # or author mentions alone are not enough to exempt ordinary prose.
+    years=re.findall(r'\b(?:18|19|20)\d{2}[a-z]?\b',value)
+    initials=AUTHOR_INITIALS.findall(value)
+    fused_publications=(len(years)>=3 and len(value)/len(years)<350 and (
+        (len(ARXIV_PREPRINT.findall(value))>=3 and len(re.findall(r'\{v\d+\}',value))>=3)
+        or (len(JOURNAL_PAGES.findall(value))>=3 and len(initials)>=3)
+        or (len(YEAR_JOURNAL.findall(value))>=3 and len(initials)>=6)))
     return bool(damaged_block or fused_arxiv_block or fused_numbered_block or fused_bracketed_block or
+                fused_fullname_block or
+                fused_publications or
                 (matches and matches[0].start()==0 and (len(matches)>1 or METADATA.search(value))) or
                 (NUMBERED.match(value) and re.search(r'\b(?:18|19|20)\d{2}\b',value) and
                  (METADATA.search(value) or JOURNAL_PAGES.search(value))))
@@ -121,6 +140,10 @@ def select(docs):
             elif getattr(p,'layout_label','')=='title' and value and not entry(value) and not (active and heading_bridge):
                 active=False
             standalone=entry(value)
+            # Captions, publisher notices and clear first-person prose can
+            # appear inside the physical reference region. They are distinct
+            # document content even if citations resume in the next column.
+            if active and not standalone and NON_REFERENCE.match(value):continue
             if heading and active or standalone or active and value:
                 selected.append((page,p,'reference_section' if active else 'citation_structure'))
     # A compact appendix contents block is sometimes printed above the first

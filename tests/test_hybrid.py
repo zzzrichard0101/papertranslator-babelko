@@ -251,6 +251,28 @@ def test_ocr_spaced_program_code_is_preserved_without_hiding_prose():
     assert not literal('The function for calculating a score (x) uses two inputs; it returns a sum.')
 
 
+def test_compact_program_fragments_and_identifier_series_are_literal():
+    from babelko.hybrid import literal
+
+    for source in (
+        '#!{v1}no{v2}main {v3}#{v4}no{v5}mangle {v6}pub fn f ( a : i 3 2 ) -{v7}i 3 2 { 0 }',
+        'i n t f ( i n t a ) { re t ur n 0 ; }',
+        'func f ( a : I n t ) -{v1}I n t { r etu rn a }',
+        "<style id='1'>for </style><style id='3'>c </style><style id='5'>in range</style><style id='7'>(board size )</style>{v9}",
+        "<style id='1'>r1 val </style>{v3}<style id='4'>model . evaluate (R1 ). as </style><style id='6'>long </style><style id='8'>()</style>",
+        'FAM-111B/161A/72D/201A/216A/169A/83D/86A/72A/120C/86C2P',
+    ):
+        assert literal(source), source
+    for prose in (
+        'For each subject in range of the scanner, we measured signal strength.',
+        'The model evaluates R1 and then reports a longer duration.',
+        'If no subject has a matching record, the analysis is incomplete.',
+        ('We demonstrate the proof by writing model.evaluate(x).asLong() as a small example. '
+         'The surrounding paragraph explains why the model remains stable for all conditions. ' * 4),
+    ):
+        assert not literal(prose), prose
+
+
 def test_patch_must_quote_source_and_revalidate_whole_target():
     source='The study does not support the claim; 24 people participated.'
     draft='연구는 주장을 지지한다. 24명이 참여했다.'

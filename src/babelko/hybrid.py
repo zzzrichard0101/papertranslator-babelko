@@ -28,7 +28,7 @@ NUMBER_SPINE=re.compile(
     +PLACEHOLDER.pattern+
     r"|(?<![A-Za-z0-9])(?:\d+[A-Za-z][A-Za-z0-9]*|[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|[+-]?\d+(?:\.\d+)?)(?![A-Za-z0-9])")
 VALIDATION_POLICY_REVISION='audited-heuristic-exception-4'
-OUTPUT_POLICY_REVISION='identifier-rows-and-code-3'
+OUTPUT_POLICY_REVISION='identifier-rows-and-code-4'
 SEGMENT_RECOVERY_REVISION='balanced-sentence-checkpoint-1'
 AUDITABLE_HEURISTICS=frozenset({'코드 함수 식별자 변경','한국어 문장 안에 영어 원문 구절 미번역','본문 과도 축약'})
 
@@ -41,6 +41,16 @@ def literal(source):
     # braces, statements and a control/type keyword still agree, retain the
     # executable text verbatim instead of flagging untranslated English.
     compact=re.sub(r'\s+','',re.sub(r'\{v\d+\}','',text)).lower()
+    # Native extraction can space every character of an executable line and
+    # replace punctuation with formula placeholders. Require syntax that is
+    # distinctive of code; ordinary English containing "for" or "if" stays
+    # translatable. Preserve exact source bytes for these program fragments.
+    if len(text)<=350 and (re.search(r'pub(?:fn|struct|enum|impl)[a-z0-9_]*\b',compact) and '{' in compact
+        or re.fullmatch(r'(?:int|void|bool|func|fn)[a-z_][a-z0-9_]*\([^)]*\)[^{]{0,20}\{[^{}]*\}',compact)
+        or re.fullmatch(r'for[a-z_][a-z0-9_]*inrange\([^)]*\):?',compact)
+        or re.search(r'\.[a-z_][a-z0-9_]*\([^)]*\)\.[a-z_][a-z0-9_]*\(',compact)
+        or re.search(r'\.join\([^)]*\)for[a-z_][a-z0-9_]*$',compact)):
+        return True
     if (compact.count('{')>=2 and compact.count(';')>=2 and '(' in compact and ')'
         in compact and re.search(r'(?:for|while|if|return|void|int|long|bool|class|struct|def)\(',compact)):
         return True
@@ -55,6 +65,7 @@ def literal(source):
         return True
     # Figure asset labels and dataset filenames are data, not English prose.
     if IDENTIFIER_LINE.fullmatch(text):return True
+    if re.fullmatch(r'[A-Z]{2,7}-[A-Z0-9]+(?:/[A-Z0-9]+){3,}',text):return True
     # OCR can surface a diagram's repeated acronym/identifier row as a text
     # unit. Preserve its exact count instead of asking a model to paraphrase it.
     tokens=text.split()
