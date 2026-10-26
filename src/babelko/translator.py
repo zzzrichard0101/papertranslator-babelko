@@ -2,7 +2,7 @@
 import collections,json,re,threading,time,uuid
 import httpx
 from .storage import save,root
-from .quantities import equivalent_fractions,equivalent_scales,equivalent_scaled_numerals,equivalent_percentage_points,percentage_point_errors,WORDS as CARDINALS
+from .quantities import equivalent_decades,equivalent_fractions,equivalent_scales,equivalent_scaled_numerals,equivalent_percentage_points,percentage_point_errors,WORDS as CARDINALS
 from .quantity_relations import REVISION as RELATION_REVISION,errors as relation_errors
 from .upstream import prepare
 prepare()
@@ -56,6 +56,7 @@ def number_errors(source,target):
     source,target=equivalent_scales(source,target)
     source,target,mismatched_scale=equivalent_scaled_numerals(plain(source),plain(target))
     if mismatched_scale:return True
+    source,target=equivalent_decades(source,target)
     source,target,unmatched=equivalent_fractions(source,target)
     if unmatched:return True
     a,b=numbers(source),numbers(target)

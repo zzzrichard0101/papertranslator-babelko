@@ -27,7 +27,7 @@ NUMBER_SPINE=re.compile(
     r"\d+<style\s+id=['\"]\d+['\"]>[,.]</style>\d+|"
     +PLACEHOLDER.pattern+
     r"|(?<![A-Za-z0-9])(?:\d+[A-Za-z][A-Za-z0-9]*|[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|[+-]?\d+(?:\.\d+)?)(?![A-Za-z0-9])")
-VALIDATION_POLICY_REVISION='audited-heuristic-exception-4'
+VALIDATION_POLICY_REVISION='audited-heuristic-exception-5'
 OUTPUT_POLICY_REVISION='identifier-rows-and-code-4'
 SEGMENT_RECOVERY_REVISION='balanced-sentence-checkpoint-1'
 AUDITABLE_HEURISTICS=frozenset({'코드 함수 식별자 변경','한국어 문장 안에 영어 원문 구절 미번역','본문 과도 축약'})

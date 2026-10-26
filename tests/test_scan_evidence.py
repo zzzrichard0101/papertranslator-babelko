@@ -112,6 +112,15 @@ def test_two_pixel_reads_can_restore_shuffled_title_without_adding_letters():
 def test_equivalent_number_spellings(source,target):assert not number_errors(source,target)
 
 
+def test_explicit_decade_to_ten_years_preserves_other_numbers():
+    assert not number_errors('Over more than a decade, the context grew to 2M tokens.',
+                             '10년 이상에 걸쳐 문맥이 200만 토큰으로 늘었다.')
+    assert not number_errors('One decade passed.', '10년이 지났다.')
+    assert number_errors('A decade passed, and 24 people participated.', '10년이 지났다.')
+    assert number_errors('A decade passed.', '20년이 지났다.')
+    assert number_errors('Several decades passed.', '10년이 지났다.')
+
+
 @pytest.mark.parametrize('source,target',[
     ('World War II ended in 1945.','제3차 세계대전은 1945년에 끝났다.'),
     ('Thirty-four participants attended.','30명이 참석했다.'),

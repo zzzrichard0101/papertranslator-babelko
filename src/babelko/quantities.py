@@ -34,6 +34,18 @@ def equivalent_scales(source,target):
     return mask(source,a),mask(target,b)
 
 
+def equivalent_decades(source,target):
+    """Pair only an explicit ten-year interval with its Korean numeral form."""
+    originals=list(re.finditer(r'\b(?:a|one)\s+decade\b',source,re.I))
+    targets=list(re.finditer(r'(?<!\d)10\s*년(?!대)',target))
+    n=min(len(originals),len(targets))
+    def mask(text,matches):
+        chars=list(text)
+        for match in matches[:n]:chars[match.start():match.end()]=' '*(match.end()-match.start())
+        return ''.join(chars)
+    return mask(source,originals),mask(target,targets)
+
+
 def equivalent_scaled_numerals(source,target):
     """Pair exact K/M/B, Korean large-unit and expanded decimal quantities."""
     factors=dict(K=1000,M=1000000,B=1000000000,백만=1000000,천만=10000000,천=1000,만=10000,억=100000000,조=1000000000000)
