@@ -506,6 +506,8 @@ def run(folder):
                 translation_tracking=tracked,quantity_relations=quantity_relations,rendered_prose=rendered,assets=asset_report,ocr_source_pages=[i+1 for i in state.get('ocr_pages',[])],checks=checks,requests=translator.requests,retries=translator.retries,translation_calls=translator.translate_call_count,cache_hits=translator.translate_cache_call_count,
                 unresolved_translation_failures=translator.hard_failures,semantic_accuracy='not_certified',manually_edited_targets=0,seconds=time.perf_counter()-began)
             report.update(mode=state['mode'],hybrid=getattr(translator,'stats',None),figures=figure_report)
+            from .source_plan import failure_summary
+            report['translation_failure_summary']=failure_summary(translator.hard_failures)
             if toc:report['toc_structure']={key:toc.get(key) for key in ('revision','status','selected_pages','unresolved_pages','restored_paragraphs')}
             if translator.experimental_pipeline:
                 report.update(region_coverage=regions,document_context=translator.document_context.report())

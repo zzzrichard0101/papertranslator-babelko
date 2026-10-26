@@ -36,6 +36,14 @@ def numbers(text):
     return collections.Counter(n.replace(',','') for n in NUMBER.findall(text))
 
 def number_errors(source,target):
+    # A model/dataset identifier such as LLaVA-665K is an exact named token,
+    # not a quantity to rescale. Compare its spelling separately in hybrid
+    # validation; omit only identical occurrences from numeric equivalence.
+    from .source_plan import locked_identifiers
+    for identifier in locked_identifiers(source):
+        if source.count(identifier)==target.count(identifier):
+            source=source.replace(identifier,' ')
+            target=target.replace(identifier,' ')
     # Canonicalize explicit section/war ordinals, never arbitrary capital I/V
     # (which may be a variable or an OCR error).
     romans={'I':1,'II':2,'III':3,'IV':4,'V':5,'VI':6,'VII':7,'VIII':8,'IX':9,'X':10}
@@ -118,6 +126,9 @@ def validate_items(inputs,outputs):
         if collections.Counter(NUMBER_STYLE.findall(source['input']))!=collections.Counter(NUMBER_STYLE.findall(target)):
             raise ValueError('서식으로 분리된 숫자 표기가 끊기거나 변경되었습니다.')
         if percentage_point_errors(plain(source['input']),plain(target)):raise ValueError('퍼센트(%)와 퍼센트포인트(%p)의 수치·단위 불일치')
+        from .source_plan import identifier_errors
+        identifiers=identifier_errors(source['input'],target)
+        if identifiers:raise ValueError('; '.join(identifiers))
         if number_errors(source['input'],target):raise ValueError('숫자·부호·출현 수 불일치: 원문 숫자 표기를 그대로 유지하세요.')
         relationships=relation_errors(source['input'],target)
         if relationships:raise ValueError('; '.join(relationships))
