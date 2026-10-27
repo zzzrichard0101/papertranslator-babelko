@@ -2,6 +2,7 @@
 
 import argparse
 import datetime as dt
+import subprocess
 import sys
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -71,6 +72,7 @@ def recheck(plan_path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--plan', type=Path, required=True)
+    parser.add_argument('--task-name', help='Windows scheduled task to disable after plan completion')
     args = parser.parse_args()
     log = args.plan.parent / 'recheck.log'
     with log.open('a', encoding='utf-8') as stream:
@@ -78,6 +80,11 @@ def main():
             print('recheck start', dt.datetime.now(dt.timezone.utc).isoformat(), flush=True)
             try:
                 recheck(args.plan)
+                if args.task_name and read(args.plan).get('status') == 'complete':
+                    subprocess.run(['schtasks','/Change','/TN',args.task_name,'/DISABLE'],
+                                   check=True,capture_output=True,
+                                   creationflags=subprocess.CREATE_NO_WINDOW)
+                    print('completed scheduled recheck disabled',flush=True)
             finally:
                 print('recheck stop', dt.datetime.now(dt.timezone.utc).isoformat(), flush=True)
 
