@@ -48,6 +48,14 @@ def standalone_identifier(value):
     return match.group(1).rstrip('.,;:') if match else None
 
 
+def comparable_identifier(value):
+    """Fold PDF glyph variants without hiding a changed URL or DOI digit."""
+    value = unicodedata.normalize('NFKC', value or '').casefold()
+    value = ''.join('-' if char in '‐‑‒–—−' else char for char in value)
+    return ''.join(char for char in value
+                   if not char.isspace() and unicodedata.category(char) != 'Cf')
+
+
 def english_words(value):
     return re.findall(r'[a-z]{3,}', unicodedata.normalize('NFKC', STYLE.sub(' ', value or '')).lower())
 
@@ -80,11 +88,11 @@ def identifier_output_status(coverage, selected, extracted_pages):
         position = index.get(page.get('source_page'))
         if position is None:
             continue
-        rendered = (''.join(char for char in extracted_pages[position] if not char.isspace())
+        rendered = (comparable_identifier(extracted_pages[position])
                     if position < len(extracted_pages) else '')
         for row in page.get('preserved_identifier_rows', []):
             checked += 1
-            if row['identifier'] not in rendered:
+            if comparable_identifier(row['identifier']) not in rendered:
                 issues.append(dict(source_page=page['source_page'], line_id=row['line_id']))
     return dict(status='failed' if issues else 'passed', checked_identifiers=checked, issues=issues)
 

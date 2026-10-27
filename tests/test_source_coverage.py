@@ -158,6 +158,15 @@ def test_standalone_doi_is_preserved_and_checked_in_final_page():
     assert missing['issues'] == [dict(source_page=3, line_id='doi-row')]
 
 
+def test_identifier_output_accepts_pdf_hyphen_and_zero_width_variants_only():
+    coverage = {'pages': [dict(source_page=1, preserved_identifier_rows=[
+        dict(line_id='doi', identifier='https://\u200bdoi.\u200borg/\u200b10.3847/1538-4357/acc6cc')])]}
+    rendered = 'https://doi.org/10.3847/1538‑4357/acc6cc'
+    assert identifier_output_status(coverage, [0], [rendered])['status'] == 'passed'
+    assert identifier_output_status(coverage, [0],
+        [rendered.replace('acc6cc', 'acc6cd')])['status'] == 'failed'
+
+
 def test_math_prose_survives_formula_placeholder_reformatting():
     source = ('The function (1 − x) is not integrable for β = −1 and hence the measure '
               'converges weakly to the uniform distribution.')
