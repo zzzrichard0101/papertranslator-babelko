@@ -48,8 +48,10 @@ def number_errors(source,target):
     # Canonicalize explicit section/war ordinals, never arbitrary capital I/V
     # (which may be a variable or an OCR error).
     romans={'I':1,'II':2,'III':3,'IV':4,'V':5,'VI':6,'VII':7,'VIII':8,'IX':9,'X':10}
-    source=re.sub(r'\b(Part|Chapter|Volume|Book|World War)\s+(VIII|VII|III|VI|IV|IX|II|X|V|I)\b',
-                  lambda m:m[1]+' '+str(romans[m[2].upper()]),source,flags=re.I)
+    # Section/war ordinals use uppercase Roman numerals. Lowercase markers
+    # such as "part i." in a lemma are enumeration labels, not Arabic 1.
+    source=re.sub(r'\b(?i:(Part|Chapter|Volume|Book|World War))\s+(VIII|VII|III|VI|IV|IX|II|X|V|I)\b',
+                  lambda m:m[1]+' '+str(romans[m[2]]),source)
     source,target=equivalent_percentage_points(source,target)
     # PDF line wrapping may split a DOI at a decimal point; join only the URL.
     source=re.sub(r'(https?://doi\.org/\S*?\d\.)\s+(?=\d)',r'\1',source)

@@ -11,6 +11,13 @@ def test_named_research_levels_and_world_war_ordinal_are_not_invented_numbers():
     assert number_errors('A primary source.', '1차 자료와 7건의 사례.')
 
 
+def test_lowercase_roman_enumeration_is_not_an_arabic_quantity():
+    source='Therefore, using Lemma 2.1, part i., there exists a solution.'
+    assert not number_errors(source, '따라서 보조정리 2.1의 i)항을 이용하면 해가 존재한다.')
+    assert number_errors(source, '따라서 보조정리 2.2의 i)항을 이용하면 해가 존재한다.')
+    assert not number_errors('Part II covers World War II.', '제2부는 제2차 세계대전을 다룬다.')
+
+
 def test_repeated_decade_resolves_source_reference_without_hiding_other_dates():
     source='1980s: The journal started in 1983. At the end of the decade, research grew.'
     target='1980년대: 학술지는 1983년에 창간되었다. 1980년대 말 연구가 늘었다.'
