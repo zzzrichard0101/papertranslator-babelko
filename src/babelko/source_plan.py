@@ -26,6 +26,12 @@ IDENTIFIERS = re.compile('|'.join((URL, EMAIL, DOI, MODEL_ID)))
 KOREAN = re.compile(r'[가-힣]')
 
 
+def canonical_dataset_spacing(text):
+    """Join a PDF-wrapped uppercase dataset suffix before exact comparison."""
+    return re.sub(r'(?<=[A-Z])-\s+(?=\d+(?:\.\d+)?[KMB](?![A-Za-z0-9_]))',
+                  '-',text)
+
+
 def locked_identifiers(source):
     """Return exact source identifiers, longest first, without URL overlap."""
     tokens = []
@@ -58,6 +64,7 @@ def identifier_errors(source, target):
     """Never silently change an exact URL, DOI, email, or model ID."""
     if not isinstance(target, str) or not KOREAN.search(target):
         return []
+    source,target=canonical_dataset_spacing(source),canonical_dataset_spacing(target)
     for token in locked_identifiers(source):
         if source.count(token) != target.count(token):
             return ['보호 식별자 누락 또는 변경']

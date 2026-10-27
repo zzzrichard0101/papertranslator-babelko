@@ -39,7 +39,8 @@ def number_errors(source,target):
     # A model/dataset identifier such as LLaVA-665K is an exact named token,
     # not a quantity to rescale. Compare its spelling separately in hybrid
     # validation; omit only identical occurrences from numeric equivalence.
-    from .source_plan import locked_identifiers
+    from .source_plan import canonical_dataset_spacing,locked_identifiers
+    source,target=canonical_dataset_spacing(source),canonical_dataset_spacing(target)
     for identifier in locked_identifiers(source):
         if source.count(identifier)==target.count(identifier):
             source=source.replace(identifier,' ')

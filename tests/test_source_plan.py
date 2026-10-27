@@ -27,6 +27,15 @@ def test_preflight_locks_exact_identifiers_without_freezing_descriptive_prose():
         raise AssertionError('A changed model identifier was accepted')
 
 
+def test_pdf_wrapped_dataset_suffix_compares_as_the_same_identifier():
+    source='Use VISION-FLAN-ICONS- 37K and LLAVA- 665K; compare LLAVA-665K.'
+    target='VISION-FLAN-ICONS-37K와 LLAVA-665K를 사용하고 LLAVA-665K와 비교한다.'
+    assert not identifier_errors(source,target)
+    assert not number_errors(source,target)
+    assert identifier_errors(source,target.replace('37K','36K'))
+    assert number_errors(source,target.replace('37K','36K'))
+
+
 def test_single_evidenced_patch_recovers_a_numeric_identifier_without_full_rewrite(tmp_path):
     source='Use LLaVA-665K with 24 examples.'
     draft='24개 예시에 LLaVA-650K를 사용한다.'
