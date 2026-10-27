@@ -379,6 +379,41 @@ def test_dense_style_translation_batches_nonempty_segments_without_losing_tags()
     assert calls==[5,5,2]
 
 
+def test_dense_numeric_fallback_keeps_more_than_32_source_anchors():
+    source=''.join(f"<style id='{i}'>We found {i} cases.</style>" for i in range(20))
+    assert len(NUMBER_SPINE.findall(source))>32
+    t=object.__new__(HybridTranslator);t.cancel=lambda:False
+    calls=[]
+    def request(messages,schema):
+        payload=json.loads(messages[1]['content'])
+        calls.append(payload['SOURCE_SEGMENTS'])
+        return json.dumps([part.replace('We found ','우리는 ').replace(' cases.','건을 확인했다.')
+                           for part in payload['SOURCE_SEGMENTS']],ensure_ascii=False)
+    t._request=request
+    result=t.protected_translation(source,dict(context=''),numeric_failure=True)
+    assert len(calls)>1
+    assert '<style id=\'19\'>우리는 19건을 확인했다.</style>' in result
+    assert not errors(source,result)
+
+
+def test_numeric_retry_uses_dense_protected_spine_after_two_bad_replies(tmp_path):
+    source=''.join(f"<style id='{i}'>We found {i} cases.</style>" for i in range(20))
+    t=object.__new__(HybridTranslator);t.checkpoints=tmp_path;t.cancel=lambda:False
+    t.retries=0;t.stats={'retranslated':0};t.hard_failures=[]
+    requests=[]
+    def request(messages,schema=None):
+        requests.append(schema)
+        if schema is None:return '잘못된 번역'
+        parts=json.loads(messages[1]['content'])['SOURCE_SEGMENTS']
+        return json.dumps([part.replace('We found ','우리는 ').replace(' cases.','건을 확인했다.')
+                           for part in parts],ensure_ascii=False)
+    t._request=request
+    record=dict(key='dense',source=source,label='text',context='',final_error='숫자·부호·출현 수 불일치')
+    t.retranslate(record)
+    assert requests[:2]==[None,None] and all(schema is not None for schema in requests[2:])
+    assert record['protected_spine'] and not errors(source,record['final'])
+
+
 def test_dense_style_batches_allow_numeric_phrase_to_cross_style_boundary():
     from babelko.translator import number_errors
     parts=['문장']*12;parts[5]='2D 위치';parts[6]='3DGS에서'

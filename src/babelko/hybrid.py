@@ -27,7 +27,7 @@ NUMBER_SPINE=re.compile(
     r"\d+<style\s+id=['\"]\d+['\"]>[,.]</style>\d+|"
     +PLACEHOLDER.pattern+
     r"|(?<![A-Za-z0-9])(?:\d+[A-Za-z][A-Za-z0-9]*|[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|[+-]?\d+(?:\.\d+)?)(?![A-Za-z0-9])")
-VALIDATION_POLICY_REVISION='audited-heuristic-exception-6'
+VALIDATION_POLICY_REVISION='audited-heuristic-exception-8'
 OUTPUT_POLICY_REVISION='identifier-rows-and-code-4'
 SEGMENT_RECOVERY_REVISION='balanced-sentence-checkpoint-1'
 AUDITABLE_HEURISTICS=frozenset({'코드 함수 식별자 변경','한국어 문장 안에 영어 원문 구절 미번역','본문 과도 축약'})
@@ -714,7 +714,10 @@ class HybridTranslator(KoreanTranslator):
         for attempt in range(3):
             target=None
             try:
-                spine=SOURCE_SPINE if (numeric_failure or identifier_failure) and len(SOURCE_SPINE.findall(source))<=32 else PLACEHOLDER
+                # The protected renderer batches dense token streams below;
+                # dropping numeric anchors here made the hardest pages retry
+                # with only formula/style tokens protected.
+                spine=SOURCE_SPINE if numeric_failure or identifier_failure else PLACEHOLDER
                 if attempt==2 and spine.search(source):
                     target=self.protected_translation(source,record,feedback,numeric_failure or identifier_failure,fraction_hint)
                     record['protected_spine']=True
@@ -739,7 +742,7 @@ class HybridTranslator(KoreanTranslator):
                 messages.append(dict(role='user',content=retry_feedback(source,target or '',str(exc))))
 
     def protected_translation(self,source,record,feedback=None,numeric_failure=True,fraction_hint=''):
-        spine=SOURCE_SPINE if numeric_failure and len(SOURCE_SPINE.findall(source))<=32 else PLACEHOLDER
+        spine=SOURCE_SPINE if numeric_failure else PLACEHOLDER
         tokens=spine.findall(source);parts=spine.split(source)
         if not tokens:raise ValueError('보호할 원문 토큰이 없습니다.')
         if (len(tokens)==1 and not parts[0].strip() and
@@ -819,7 +822,9 @@ class HybridTranslator(KoreanTranslator):
         issues=[c for c in record.get('assurance',{}).get('checks',[]) if c['verdict']!='faithful']
         if len(parts)==1:
             if len(PLACEHOLDER.findall(source))>20:
-                target=self.protected_translation(source,record,issues,False)
+                numeric_failure=('숫자' in record.get('final_error','') or
+                    any('숫자' in issue for issue in record.get('draft_errors',[])))
+                target=self.protected_translation(source,record,issues,numeric_failure)
                 problem=errors(source,target,record['label'])
                 if problem:raise ValueError('; '.join(problem))
                 self.clear_failure(record);record.pop('assurance',None)
@@ -848,7 +853,7 @@ class HybridTranslator(KoreanTranslator):
                 target=self._request(messages);problem=errors(part,target,record['label'])
                 if not problem:break
                 if attempt:
-                    if any('숫자' in issue for issue in problem) and 0<len(NUMBER_SPINE.findall(part))<=32:
+                    if any('숫자' in issue for issue in problem) and NUMBER_SPINE.search(part):
                         target=self.protected_translation(part,record,issues,True)
                         problem=errors(part,target,record['label'])
                     if problem:raise ValueError('; '.join(problem))

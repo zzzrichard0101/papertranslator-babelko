@@ -131,6 +131,23 @@ def test_spelled_large_quantities_and_zeroth_order_keep_exact_values():
     assert number_errors('A zeroth-order term.', '1차 항.')
 
 
+def test_exact_24_hour_clock_conversion_keeps_other_quantities_strict():
+    source='Observed 3 November 2021 around 18:00 UT and lasted 30 minutes.'
+    assert not number_errors(source,'2021년 11월 3일 오후 6시경 관측되었고 30분 지속되었다.')
+    assert number_errors(source,'2021년 11월 3일 오후 7시경 관측되었고 30분 지속되었다.')
+    assert number_errors(source,'2021년 11월 3일 오전 6시경 관측되었고 30분 지속되었다.')
+    assert number_errors(source,'2021년 11월 3일 오후 6시경 관측되었다.')
+
+
+def test_transliterated_proper_name_suffix_is_not_a_negative_number():
+    source='Helios-1 and Helios-2 measured 10 mV, while the temperature was -5.'
+    target='헬리오스-1과 헬리오스-2가 10 mV를 측정했고 기온은 -5였다.'
+    assert not number_errors(source,target)
+    assert number_errors(source,target.replace('헬리오스-2','헬리오스-3'))
+    assert number_errors(source,target.replace('기온은 -5','기온은 5'))
+    assert number_errors('The temperature was 5.','기온-5였다.')
+
+
 @pytest.mark.parametrize('source,target',[
     ('World War II ended in 1945.','제3차 세계대전은 1945년에 끝났다.'),
     ('Thirty-four participants attended.','30명이 참석했다.'),

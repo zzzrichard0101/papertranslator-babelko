@@ -49,6 +49,46 @@ def equivalent_decades(source,target):
     return mask(source,originals),mask(target,targets)
 
 
+def equivalent_clocks(source,target):
+    """Pair exact 24-hour times with Korean 오전/오후 clock notation."""
+    originals=list(re.finditer(r'(?<![\w:])([01]?\d|2[0-3]):([0-5]\d)(?!\d)',source))
+    targets=list(re.finditer(r'(?<![가-힣])(?:오전|오후)\s*(1[0-2]|\d)\s*시(?:\s*([0-5]?\d)\s*분)?',target))
+    used=set();left=[];right=[]
+    for original in originals:
+        hour,minute=int(original[1]),int(original[2])
+        partner=next((i for i,item in enumerate(targets)
+            if i not in used and (int(item[1])%12+(12 if item[0].startswith('오후') else 0))==hour
+            and int(item[2] or 0)==minute),None)
+        if partner is not None:
+            used.add(partner);left.append(original.span());right.append(targets[partner].span())
+    def mask(text,spans):
+        chars=list(text)
+        for start,end in spans:chars[start:end]=' '*(end-start)
+        return ''.join(chars)
+    return mask(source,left),mask(target,right)
+
+
+def equivalent_named_labels(source,target):
+    """Pair a Latin proper-name suffix with a Korean name's identical suffix.
+
+    A bare Korean word followed by -5 is never enough: the source must carry
+    the same positive suffix on a capitalized name, such as Helios-1.
+    """
+    originals=list(re.finditer(r'(?<![A-Za-z0-9])[A-Z][A-Za-z]{2,}-(\d+)(?![A-Za-z0-9])',source))
+    targets=list(re.finditer(r'(?<![가-힣])(?:[가-힣]{2,})-(\d+)(?!\d)',target))
+    used=set();left=[];right=[]
+    for original in originals:
+        partner=next((i for i,item in enumerate(targets)
+                      if i not in used and item[1]==original[1]),None)
+        if partner is not None:
+            used.add(partner);left.append(original.span());right.append(targets[partner].span())
+    def mask(text,spans):
+        chars=list(text)
+        for start,end in spans:chars[start:end]=' '*(end-start)
+        return ''.join(chars)
+    return mask(source,left),mask(target,right)
+
+
 def equivalent_scaled_numerals(source,target):
     """Pair exact K/M/B, Korean large-unit and expanded decimal quantities."""
     factors=dict(K=1000,M=1000000,B=1000000000,백만=1000000,천만=10000000,천=1000,만=10000,억=100000000,조=1000000000000)
