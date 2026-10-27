@@ -479,9 +479,22 @@ class HybridTranslator(KoreanTranslator):
 
     def reconcile_failures(self):
         """Report each unresolved active source once after native replay."""
+        from .assurance import checked
         keys=getattr(self,'unresolved_keys',set())
-        self.hard_failures=[dict(key=r['key'],source=r['source'],error=r.get('final_error','검수 미완료'))
-            for r in self.units.values() if r['key'] in keys]
+        failures=[]
+        for record in self.units.values():
+            if record['key'] not in keys:continue
+            reason=record.get('final_error','검수 미완료')
+            if record.get('final'):
+                current=record_errors(record)
+                if current:reason='; '.join(current)
+                elif any(row['verdict']!='faithful' for row in checked(record) or []):
+                    reason='문장별 원문·번역 대조에서 반복 오류'
+            if record.get('final_error')!=reason:
+                record['final_error']=reason
+                self.checkpoint(record)
+            failures.append(dict(key=record['key'],source=record['source'],error=reason))
+        self.hard_failures=failures
 
     def accept_audited_heuristic(self,record,candidates):
         """After normal repair fails, independently check narrow false positives."""

@@ -610,6 +610,20 @@ def test_new_replay_failure_keeps_source_and_checkpoint(tmp_path):
     assert t.hard_failures==[dict(key=record['key'],source=source,error='unit review failed')]
 
 
+def test_reconcile_reports_current_meaning_defect_instead_of_old_numeric_error(tmp_path,monkeypatch):
+    from babelko.storage import read
+    t=object.__new__(HybridTranslator);t.checkpoints=tmp_path
+    t.stats={'checkpoint_writes':0}
+    source='The method included 24 participants.'
+    record=dict(key='unit',source=source,final='이 방법에는 24명이 참여했다.',label='text',
+                final_error='숫자·부호·출현 수 불일치')
+    t.units={'unit':record};t.unresolved_keys={'unit'};t.hard_failures=[]
+    monkeypatch.setattr('babelko.assurance.checked',lambda _: [dict(verdict='contradiction')])
+    t.reconcile_failures()
+    assert t.hard_failures==[dict(key='unit',source=source,error='문장별 원문·번역 대조에서 반복 오류')]
+    assert read(tmp_path/'unit.json')['final_error']=='문장별 원문·번역 대조에서 반복 오류'
+
+
 def test_segmented_recovery_commits_only_a_complete_validated_candidate(tmp_path):
     t=object.__new__(HybridTranslator);t.checkpoints=tmp_path;t.cancel=lambda:False;t.retries=0
     t.hard_failures=[];t.stats={'retranslated':0};calls=[]
