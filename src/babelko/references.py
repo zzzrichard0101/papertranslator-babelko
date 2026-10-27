@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 from .storage import save
 
-REVISION='bibliography-original-and-contents-15'
+REVISION='bibliography-original-and-contents-16'
 TAGS=re.compile(r'<[^>]+>')
 HEADING=re.compile(r'^(?:(?:\d+(?:\.\d+)*|[A-Z])\.?\s+)?(?:references|bibliography|works cited|literature cited|참고\s*문헌)\s*[:.]?$',re.I)
 AUTHOR_YEAR=re.compile(r"\b[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s+(?:[A-Z]\.\s*){1,3}(?:(?:,?\s*&\s*|,\s*)[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s*(?:[A-Z]\.\s*){1,3})?\s*(?:\(Ed(?:s)?\.\)\.\s*)?\((?:18|19|20)\d{2}[a-z]?\)\.")
@@ -24,6 +24,9 @@ BRACKETED_ANCHOR=re.compile(r'\[\d{1,3}\]\s+[A-Z][A-Za-zÀ-ÿ’\'\-]+,\s*[A-Z]\
 BRACKETED_FULLNAME=re.compile(r'\[\d{1,3}\]\s+(?:[A-Z]\.?(?:\s+|(?=[A-Z]))){0,2}[A-Z][A-Za-zÀ-ÿ’\'\-]+(?:\s+[A-Z][A-Za-zÀ-ÿ’\'\-]+){1,3}[,.]')
 JOURNAL_PAGES=re.compile(r'\b\d{1,4}\s*,\s*\d{2,6}(?:[-–]\d+)?\s*\((?:18|19|20)\d{2}\)')
 AUTHOR_INITIALS=re.compile(r"\b[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+,\s*(?:[A-Z]\.\s*){1,3}")
+FULL_AUTHOR_NAME=re.compile(r"[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+(?:\s+[A-Z]\.)?\s+[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÿ’'\-]+")
+FULL_AUTHOR_YEAR=re.compile(r'\.\s*(?:19|20)\d{2}[a-z]?\.\s+')
+PUBLICATION_VENUE=re.compile(r'\b(?:in\s+(?:proc\.|proceedings|conference|int\.\s*conf\.)|pages?\s+\d+|preprint\s+arxiv\s*:)',re.I)
 YEAR_JOURNAL=re.compile(r'\b(?:18|19|20)\d{2}[a-z]?,\s*[A-Z][A-Za-z.]{1,12},\s*\d{1,5}\b')
 ARXIV_PREPRINT=re.compile(r'\barxiv\s*(?:preprint\s*)?(?:arxiv\s*)?:\s*\d{4}\.\d{4,5}\b',re.I)
 AUTHOR_BIO=re.compile(r'^[A-Z][A-Z .\-]{9,}\s+(?:\([^)]*IEEE\)\s+)?(?:received|obtained|earned|is currently|was born)\b',re.I)
@@ -67,8 +70,17 @@ def entry(value):
         (len(ARXIV_PREPRINT.findall(value))>=3 and len(re.findall(r'\{v\d+\}',value))>=3)
         or (len(JOURNAL_PAGES.findall(value))>=3 and len(initials)>=3)
         or (len(YEAR_JOURNAL.findall(value))>=3 and len(initials)>=6)))
+    # NLP proceedings commonly spell every author as a full given and family
+    # name, followed by "2023. Title. In Proc. ...".  The heading only opens
+    # preservation after a real entry; otherwise an entire reference section
+    # can be sent to the model as ordinary prose.
+    author_year=FULL_AUTHOR_YEAR.search(value[:550])
+    author_text=value[:author_year.start()] if author_year else ''
+    full_name_entry=bool(author_year and len(author_text)<450 and
+        FULL_AUTHOR_NAME.match(author_text) and len(FULL_AUTHOR_NAME.findall(author_text))>=2 and
+        (METADATA.search(value[author_year.end():]) or PUBLICATION_VENUE.search(value[author_year.end():])))
     return bool(damaged_block or fused_arxiv_block or fused_numbered_block or fused_bracketed_block or
-                fused_fullname_block or
+                fused_fullname_block or full_name_entry or
                 fused_publications or
                 (matches and matches[0].start()==0 and (len(matches)>1 or METADATA.search(value))) or
                 (NUMBERED.match(value) and re.search(r'\b(?:18|19|20)\d{2}\b',value) and

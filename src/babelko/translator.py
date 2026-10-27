@@ -94,6 +94,9 @@ def number_errors(source,target):
         count=sum(len(re.findall(r'\b'+term+r'\b',source,re.I)) for term in terms)
         used=min(count,len(re.findall(r'(?<!\d)'+digit+r'\s*차(?!원)',target)))
         extra[digit]=max(0,extra[digit]-used)
+    # "zeroth-order" is an ordinal in technical prose, not a new measurement.
+    zero_orders=len(re.findall(r'\bzeroth(?:[-\s]+order)?\b',source,re.I))
+    extra['0']=max(0,extra['0']-min(zero_orders,len(re.findall(r'(?<!\d)0\s*차(?!원)',target))))
     if re.search(r'\b(?:WWII|World\s+War\s+II)\b',source,re.I):
         used=len(re.findall(r'(?:제\s*)?2\s*차\s*세계\s*대전',target))
         extra['2']=max(0,extra['2']-used)

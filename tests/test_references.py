@@ -213,6 +213,27 @@ def test_fused_numbered_full_name_publications_are_preserved():
                      'We analyze these papers in the next section.')
 
 
+def test_full_name_proceedings_entries_open_and_continue_references():
+    first=paragraph('Josh Achiam, Steven Adler, Sandhini Agarwal, et al. 2023. '
+                    'GPT-4 technical report. Preprint arXiv:2303.08774.')
+    second=paragraph('Rami Al-Rfou, Dokook Choe, Noah Constant, Mandy Guo, and Llion Jones. '
+                     '2019. Character-level language modeling. In Proc. Conference on '
+                     'Artificial Intelligence, pages 3159–3166.')
+    continuation=paragraph('Int. Conf. on Machine Learning, New York City, USA.')
+    last=paragraph('Teven Le Scao, Thomas Wang, Daniel Hesslow, Stas Bekman, and Iz Beltagy. '
+                   '2022. What language model to train? In Proc. Findings of Conf. on '
+                   'Empirical Methods in Natural Language Processing, pages 765–782.')
+    heading=paragraph('References','title')
+    section=paragraph('A Reminder: Derivation of the dual form','title')
+    body=paragraph('We derive the relation for the model in this section.')
+    chosen=[p for _,p,_ in select(document(
+        [heading,first,second,continuation],
+        [last,section,body]))]
+    assert chosen==[heading,first,second,continuation,last]
+    assert not entry('We compare Josh Achiam and Steven Adler. 2023. '
+                     'Their study informs our implementation of the model.')
+
+
 def test_figures_and_publisher_notes_within_reference_region_stay_translatable():
     heading=paragraph('References','title')
     first=paragraph(APA)

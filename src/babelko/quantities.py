@@ -19,12 +19,15 @@ def expand_scale_ranges(text):
 def equivalent_scales(source,target):
     """Mask only exactly paired large quantities, e.g. 2 billion == 20억."""
     source,target=expand_scale_ranges(source),expand_scale_ranges(target)
-    en=list(re.finditer(r'(?<![\w])([-+−]?\d+(?:\.\d+)?)\s*(thousand|million|billion|trillion)\b',source,re.I))
+    word_number='|'.join(sorted(WORDS,key=len,reverse=True))
+    en=list(re.finditer(r'(?<![\w])([-+−]?\d+(?:\.\d+)?\s*|(?:'+word_number+
+        r')\s+)(thousand|million|billion|trillion)\b',source,re.I))
     ko=list(re.finditer(r'(?<![\w])([-+−]?\d+(?:\.\d+)?)\s*(천|만|억|조)',target))
     factors=dict(thousand=1000,million=1000000,billion=1000000000,trillion=1000000000000,천=1000,만=10000,억=100000000,조=1000000000000)
     used=set();a=[];b=[]
     for original in en:
-        amount=Fraction(original[1].replace('−','-'))*factors[original[2].lower()]
+        raw=original[1].strip();multiplier=WORDS.get(raw.lower())
+        amount=Fraction(multiplier if multiplier is not None else raw.replace('−','-'))*factors[original[2].lower()]
         match=next((i for i,t in enumerate(ko) if i not in used and Fraction(t[1].replace('−','-'))*factors[t[2]]==amount),None)
         if match is not None:used.add(match);a.append(original.span());b.append(ko[match].span())
     def mask(text,spans):
@@ -36,7 +39,7 @@ def equivalent_scales(source,target):
 
 def equivalent_decades(source,target):
     """Pair only an explicit ten-year interval with its Korean numeral form."""
-    originals=list(re.finditer(r'\b(?:a|one)\s+decade\b',source,re.I))
+    originals=list(re.finditer(r'\b(?:a|one|(?:(?:the\s+)?(?:last|past|previous)))\s+decade\b',source,re.I))
     targets=list(re.finditer(r'(?<!\d)10\s*년(?!대)',target))
     n=min(len(originals),len(targets))
     def mask(text,matches):

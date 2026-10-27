@@ -119,6 +119,16 @@ def test_explicit_decade_to_ten_years_preserves_other_numbers():
     assert number_errors('A decade passed, and 24 people participated.', '10년이 지났다.')
     assert number_errors('A decade passed.', '20년이 지났다.')
     assert number_errors('Several decades passed.', '10년이 지났다.')
+    assert not number_errors('The share fell over the last decade.', '지난 10년 동안 비중이 감소했다.')
+    assert number_errors('The share fell over the last decade.', '지난 20년 동안 비중이 감소했다.')
+
+
+def test_spelled_large_quantities_and_zeroth_order_keep_exact_values():
+    assert not number_errors('We computed up to one million prime gaps.', '소수 간격을 100만 개까지 계산했다.')
+    assert not number_errors('Two million points and a zeroth-order term.', '200만 개의 점과 0차 항.')
+    assert number_errors('We computed up to one million prime gaps and 24 cases.', '소수 간격을 100만 개까지 계산했다.')
+    assert number_errors('Two million points.', '200만 점과 7개 사례.')
+    assert number_errors('A zeroth-order term.', '1차 항.')
 
 
 @pytest.mark.parametrize('source,target',[
